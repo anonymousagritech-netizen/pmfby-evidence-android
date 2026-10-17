@@ -11,7 +11,7 @@ package com.pmfby.evidence.core.template
  * Placeholder syntax matches the backend exactly: `{VarName}`, letters/digits/underscore.
  */
 object TemplateRenderer {
-    private val PLACEHOLDER_REGEX = Regex("\\{([A-Za-z0-9_]+)}")
+    private val PLACEHOLDER_REGEX = Regex("\\{([A-Za-z0-9_]+)\\}")
 
     data class RenderResult(val rendered: String, val missing: List<String>)
 

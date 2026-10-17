@@ -77,6 +77,10 @@ class EmergencyCaptureService : LifecycleService() {
     }
 
     fun startCapture(caseId: String) {
+        // The ViewModel (re)binds to this service on every screen re-creation, so
+        // onServiceConnected can fire while a recording is already running. Starting again
+        // would throw IllegalEmergencyTransition (RECORDING -> start) and crash the app.
+        if (timerController.currentState() == EmergencyRecordingState.RECORDING) return
         startForeground(NOTIFICATION_ID, buildNotification(elapsedSeconds = 0))
         timerController.start()
         startTicking()
@@ -164,10 +168,10 @@ class EmergencyCaptureService : LifecycleService() {
     }
 
     private fun buildNotification(elapsedSeconds: Int): Notification {
-        val channelId = "emergency_capture"
+        val channelId = "emergency_capture_v2"
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(channelId, "Emergency recording", NotificationManager.IMPORTANCE_HIGH)
+            val channel = NotificationChannel(channelId, "Emergency recording", NotificationManager.IMPORTANCE_LOW)
             manager.createNotificationChannel(channel)
         }
         val openAppIntent = PendingIntent.getActivity(
@@ -179,6 +183,7 @@ class EmergencyCaptureService : LifecycleService() {
             .setContentText("Elapsed: ${elapsedSeconds}s / ${EmergencyTimerController.HARD_CAP_SECONDS}s — tap to return to the app")
             .setSmallIcon(android.R.drawable.ic_menu_report_image)
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
             .setContentIntent(openAppIntent)
             .build()
     }

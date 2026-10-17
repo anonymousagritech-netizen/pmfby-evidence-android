@@ -1,5 +1,7 @@
 package com.pmfby.evidence.app.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -10,6 +12,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -35,8 +38,12 @@ import com.pmfby.evidence.app.ui.components.PmfbyTopBar
 @Composable
 fun CallScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
     val context = LocalContext.current
-    val viewModel = appViewModel { app -> CallViewModel(app.farmerRepository, app.caseActionsRepository, app.locationProvider, caseId) }
+    val viewModel = appViewModel { app -> CallViewModel(app, app.farmerRepository, app.caseActionsRepository, app.locationProvider, app.sessionManager, app.fileUploadApi, caseId) }
     val state by viewModel.uiState.collectAsState()
+
+    val recordingPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) viewModel.uploadCallRecording(uri)
+    }
 
     LaunchedEffect(state.outcomeSubmitted) {
         if (state.outcomeSubmitted) onDone()
@@ -100,6 +107,36 @@ fun CallScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                                 onValueChange = viewModel::onPersonContactedRelationChange,
                                 label = { Text("Relation to farmer") },
                                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                            )
+                        }
+                    }
+                }
+
+                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("Call recording", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Record the call with your phone's own call recorder, then attach the file here " +
+                                "(Android does not allow apps to record calls themselves).",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 4.dp),
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = state.recordingConsent, onCheckedChange = viewModel::onRecordingConsentChange)
+                            Text("The person on the call was informed the call was recorded")
+                        }
+                        OutlinedButton(
+                            onClick = { recordingPicker.launch("audio/*") },
+                            enabled = state.recordingConsent && !state.isUploadingRecording,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                when {
+                                    state.isUploadingRecording -> "Uploading…"
+                                    state.recordingUploaded -> "Recording uploaded ✓ — attach another"
+                                    else -> "Attach call recording"
+                                },
                             )
                         }
                     }
