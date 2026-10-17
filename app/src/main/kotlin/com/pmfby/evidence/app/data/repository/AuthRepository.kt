@@ -8,9 +8,10 @@ class AuthRepository(
     private val session: SessionManager,
 ) {
     /** Returns null on success, or a human-readable error message on failure. */
-    suspend fun login(email: String, password: String): String? {
+    suspend fun login(identifier: String, password: String): String? {
         return try {
-            val response = api.login(mapOf("email" to email, "password" to password))
+            // "identifier" accepted by the backend as either email or mobile number
+            val response = api.login(mapOf("identifier" to identifier, "password" to password))
             val token = response["token"] as? String
                 ?: return "Server did not return a session token"
             @Suppress("UNCHECKED_CAST")
@@ -29,7 +30,7 @@ class AuthRepository(
             )
             null
         } catch (e: retrofit2.HttpException) {
-            if (e.code() == 401) "Invalid email or password" else "Server error (HTTP ${e.code()})"
+            if (e.code() == 401) "Invalid email/mobile or password" else "Server error (HTTP ${e.code()})"
         } catch (e: java.io.IOException) {
             "Could not reach the server — check the API base URL and your connection"
         }
