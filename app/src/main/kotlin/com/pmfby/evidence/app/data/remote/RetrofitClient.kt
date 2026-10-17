@@ -14,6 +14,9 @@ import java.util.concurrent.TimeUnit
  * Android-emulator alias `http://10.0.2.2:4000/api/` for the host machine's own
  * localhost backend — see README "Backend connection" for pointing this at a LAN IP
  * instead, for a physical device.
+ *
+ * Timeouts are set to 60s connect / 60s read to survive Render free-tier cold-start
+ * spin-up delays (Render warns these can be 50s+).
  */
 object RetrofitClient {
     val moshi: Moshi = Moshi.Builder().build()
@@ -23,8 +26,8 @@ object RetrofitClient {
             level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BODY else HttpLoggingInterceptor.Level.NONE
         }
         OkHttpClient.Builder()
-            .connectTimeout(20, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
+            .connectTimeout(60, TimeUnit.SECONDS)  // Render free tier can take ~50s to wake
+            .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS) // evidence/voice-note/emergency media uploads
             .addInterceptor(logging)
             .build()
