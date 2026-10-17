@@ -19,7 +19,13 @@ import retrofit2.http.Query
  *
  * Every endpoint except login requires the `Authorization: Bearer <jwt>` header, matching
  * backend/src/middleware/auth.js's `authenticate` middleware exactly.
+ *
+ * @JvmSuppressWildcards is required: without it Kotlin compiles a `Map<String, Any?>`
+ * @Body parameter to Java's `Map<String, ?>`, which Retrofit rejects at call time with
+ * "Parameter type must not include a type variable or wildcard" (the request never even
+ * leaves the phone). Login worked only because `Map<String, String>` has no wildcard.
  */
+@JvmSuppressWildcards
 interface ApiService {
 
     @POST("auth/login")
