@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="pmfby_green">#2E7D32</color>
+    <color name="pmfby_green_dark">#1B5E20</color>
+    <color name="pmfby_amber">#F9A825</color>
+    <color name="pmfby_red">#C62828</color>
+    <color name="pmfby_surface">#FFFFFF</color>
+    <color name="pmfby_background">#F4F6F3</color>
+</resources>
