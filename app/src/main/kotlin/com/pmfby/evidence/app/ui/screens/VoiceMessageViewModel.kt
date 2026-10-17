@@ -13,6 +13,17 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/**
+ * Moshi parses every JSON number inside a `Map<String, Any?>` as a Double, so an integer id
+ * of 1 turns into "1.0" via toString() — which Postgres rejects for an integer column (HTTP
+ * 500). This renders whole-number Doubles as plain integers.
+ */
+internal fun jsonIdToString(value: Any?): String? = when (value) {
+    null -> null
+    is Double -> if (value % 1.0 == 0.0) value.toLong().toString() else value.toString()
+    else -> value.toString()
+}
+
 data class VoiceTemplateOption(val id: String, val code: String, val label: String)
 
 data class VoiceMessageUiState(
@@ -68,7 +79,7 @@ class VoiceMessageViewModel(
                 @Suppress("UNCHECKED_CAST")
                 val raw = response["templates"] as? List<Map<String, Any?>> ?: emptyList()
                 val options = raw.mapNotNull { row ->
-                    val id = row["id"]?.toString() ?: return@mapNotNull null
+                    val id = jsonIdToString(row["id"]) ?: return@mapNotNull null
                     val code = row["code"]?.toString() ?: return@mapNotNull null
                     VoiceTemplateOption(id, code, code.replace('_', ' '))
                 }

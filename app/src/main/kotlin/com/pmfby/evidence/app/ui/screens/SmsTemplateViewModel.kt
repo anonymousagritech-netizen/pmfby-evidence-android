@@ -1,14 +1,21 @@
 package com.pmfby.evidence.app.ui.screens
 
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pmfby.evidence.app.data.local.FarmerEntity
 import com.pmfby.evidence.app.data.remote.ApiService
+import com.pmfby.evidence.app.data.remote.FileUploadApi
 import com.pmfby.evidence.app.data.repository.ActionResult
 import com.pmfby.evidence.app.data.repository.CaseActionsRepository
 import com.pmfby.evidence.app.data.repository.FarmerRepository
 import com.pmfby.evidence.app.session.SessionManager
 import com.pmfby.evidence.core.template.TemplateRenderer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +34,9 @@ data class SmsTemplateUiState(
     val isSending: Boolean = false,
     val error: String? = null,
     val composerOpened: Boolean = false,
+    val messageEventId: String? = null,
+    val isUploadingScreenshot: Boolean = false,
+    val screenshotUploaded: Boolean = false,
 )
 
 /**
@@ -39,6 +49,8 @@ data class SmsTemplateUiState(
  * class doc). FORMAT_4_INCIDENT is filtered out entirely — see isEligibleForSmsComposer.
  */
 class SmsTemplateViewModel(
+    private val appContext: Context,
+    private val fileUploadApi: FileUploadApi,
     private val api: ApiService,
     private val session: SessionManager,
     private val farmerRepository: FarmerRepository,
@@ -69,7 +81,7 @@ class SmsTemplateViewModel(
             @Suppress("UNCHECKED_CAST")
             val raw = response["templates"] as? List<Map<String, Any?>> ?: emptyList()
             val options = raw.mapNotNull { row ->
-                val id = row["id"]?.toString() ?: return@mapNotNull null
+                val id = jsonIdToString(row["id"]) ?: return@mapNotNull null
                 val code = row["code"]?.toString() ?: return@mapNotNull null
                 if (!TemplateRenderer.isEligibleForSmsComposer(code)) return@mapNotNull null
                 SmsTemplateOption(id, code, code.replace('_', ' '))
@@ -106,9 +118,63 @@ class SmsTemplateViewModel(
             val status = if (opened) "opened_composer" else "drafted"
             val result = caseActionsRepository.submitMessageEvent(caseId, templateId, renderedText, phone, status)
             when (result) {
-                is ActionResult.Submitted, is ActionResult.QueuedOffline ->
+                is ActionResult.Submitted -> {
+                    @Suppress("UNCHECKED_CAST")
+                    val eventId = (result.serverResponse["messageEvent"] as? Map<String, Any?>)?.get("id")?.toString()
+                    _uiState.update { it.copy(isSending = false, composerOpened = opened, messageEventId = eventId) }
+                }
+                is ActionResult.QueuedOffline ->
                     _uiState.update { it.copy(isSending = false, composerOpened = opened) }
                 is ActionResult.Failed -> _uiState.update { it.copy(isSending = false, error = result.message) }
+            }
+        }
+    }
+
+    /**
+     * Android never lets one app silently screenshot another (the SMS app), so the surveyor
+     * takes the phone's own screenshot of the sent message and attaches it here. It is stored
+     * as `evidence_files` kind=screenshot, linked to this case and this message event. If the
+     * upload fails the file is queued for automatic retry instead of being lost.
+     */
+    fun uploadScreenshot(uri: Uri) {
+        viewModelScope.launch {
+            val auth = session.authHeader() ?: run {
+                _uiState.update { it.copy(error = "Not signed in") }
+                return@launch
+            }
+            _uiState.update { it.copy(isUploadingScreenshot = true, screenshotUploaded = false, error = null) }
+            var file: File? = null
+            var fields: Map<String, String> = emptyMap()
+            try {
+                withContext(Dispatchers.IO) {
+                    val resolver = appContext.contentResolver
+                    val mime = resolver.getType(uri) ?: "image/png"
+                    val name = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                        if (c.moveToFirst()) c.getString(0) else null
+                    } ?: "sms_${System.currentTimeMillis()}.png"
+                    val dir = File(appContext.cacheDir, "evidence").apply { mkdirs() }
+                    val target = File(dir, "sms_" + name.replace(Regex("[^A-Za-z0-9._-]"), "_"))
+                    file = target
+                    resolver.openInputStream(uri)?.use { input -> target.outputStream().use { input.copyTo(it) } }
+                        ?: throw java.io.IOException("Could not open the selected image")
+                    fields = buildMap {
+                        put("caseId", caseId)
+                        put("kind", "screenshot")
+                        put("mimeType", mime)
+                        _uiState.value.messageEventId?.let { put("messageEventId", it) }
+                    }
+                    fileUploadApi.uploadEvidence(authHeader = auth, file = target, mimeType = mime, fields = fields)
+                }
+                file?.delete()
+                _uiState.update { it.copy(isUploadingScreenshot = false, screenshotUploaded = true) }
+            } catch (e: Exception) {
+                val saved = file
+                if (saved != null && saved.exists() && fields.isNotEmpty()) {
+                    caseActionsRepository.enqueueEvidenceForRetry(saved.absolutePath, fields)
+                    _uiState.update { it.copy(isUploadingScreenshot = false, error = "Upload failed (${e.message}). Saved and queued for automatic retry.") }
+                } else {
+                    _uiState.update { it.copy(isUploadingScreenshot = false, error = "Screenshot upload failed: ${e.message}") }
+                }
             }
         }
     }

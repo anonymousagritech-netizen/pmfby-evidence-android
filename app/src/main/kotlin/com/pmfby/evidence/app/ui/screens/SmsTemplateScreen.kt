@@ -1,5 +1,7 @@
 package com.pmfby.evidence.app.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,7 +15,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -29,12 +30,12 @@ import com.pmfby.evidence.app.ui.components.PmfbyTopBar
 fun SmsTemplateScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
     val context = LocalContext.current
     val viewModel = appViewModel { app ->
-        SmsTemplateViewModel(app.apiService, app.sessionManager, app.farmerRepository, app.caseActionsRepository, caseId)
+        SmsTemplateViewModel(app, app.fileUploadApi, app.apiService, app.sessionManager, app.farmerRepository, app.caseActionsRepository, caseId)
     }
     val state by viewModel.uiState.collectAsState()
 
-    LaunchedEffect(state.composerOpened) {
-        if (state.composerOpened) onDone()
+    val screenshotPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) viewModel.uploadScreenshot(uri)
     }
 
     Scaffold(topBar = { PmfbyTopBar(title = "Send SMS", onBack = onBack) }) { padding ->
@@ -57,7 +58,33 @@ fun SmsTemplateScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                 ) { Text(option.label) }
             }
 
-            if (state.renderedText.isNotBlank()) {
+            if (state.composerOpened) {
+                Card(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("SMS app opened", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Press send in your SMS app, take a screenshot of the sent message, then " +
+                                "come back here and attach it as evidence.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(vertical = 8.dp),
+                        )
+                        OutlinedButton(
+                            onClick = { screenshotPicker.launch("image/*") },
+                            enabled = !state.isUploadingScreenshot,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                when {
+                                    state.isUploadingScreenshot -> "Uploading…"
+                                    state.screenshotUploaded -> "Screenshot uploaded ✓ — attach another"
+                                    else -> "Attach SMS screenshot"
+                                },
+                            )
+                        }
+                        Button(onClick = onDone, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Done") }
+                    }
+                }
+            } else if (state.renderedText.isNotBlank()) {
                 Card(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
                     Text(state.renderedText, modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.bodyLarge)
                 }
