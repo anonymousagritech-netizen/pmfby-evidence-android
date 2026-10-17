@@ -23,7 +23,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -42,7 +41,7 @@ fun DiscrepancyFlagScreen(caseId: String, onBack: () -> Unit, onSubmitted: () ->
     val viewModel = appViewModel { app -> DiscrepancyFlagViewModel(app.sessionManager, app.fileUploadApi, app.caseActionsRepository, caseId) }
     val state by viewModel.uiState.collectAsState()
     var reasonMenuExpanded by remember { mutableStateOf(false) }
-    var pendingPhotoFile by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingPhotoFile by remember { mutableStateOf<String?>(null) }
 
     val takePictureLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         if (success) {
