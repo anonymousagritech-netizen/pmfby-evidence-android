@@ -25,6 +25,9 @@ interface ApiService {
     @POST("auth/login")
     suspend fun login(@Body body: Map<String, String>): Map<String, Any?>
 
+    @POST("auth/change-password")
+    suspend fun changePassword(@Header("Authorization") auth: String, @Body body: Map<String, String>): Map<String, Any?>
+
     @GET("farmers")
     suspend fun listFarmers(
         @Header("Authorization") auth: String,

@@ -56,9 +56,9 @@ fun LoginScreen(onLoggedIn: () -> Unit) {
             OutlinedTextField(
                 value = state.email,
                 onValueChange = viewModel::onEmailChange,
-                label = { Text("Email") },
+                label = { Text("Email or Mobile Number") },
                 singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(

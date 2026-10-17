@@ -3,6 +3,7 @@ package com.pmfby.evidence.app.navigation
 /** Centralized nav-compose route strings/builders — see AppNavigation.kt for the NavHost. */
 object Routes {
     const val LOGIN = "login"
+    const val CHANGE_PASSWORD = "change-password"
     const val FARMERS = "farmers"
 
     const val FARMER_DETAIL_PATTERN = "farmer/{farmerId}"

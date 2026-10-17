@@ -8,6 +8,7 @@ import androidx.navigation.compose.rememberNavController
 import com.pmfby.evidence.app.ui.LocalApp
 import com.pmfby.evidence.app.ui.screens.CallScreen
 import com.pmfby.evidence.app.ui.screens.CaseDetailScreen
+import com.pmfby.evidence.app.ui.screens.ChangePasswordScreen
 import com.pmfby.evidence.app.ui.screens.DiscrepancyFlagScreen
 import com.pmfby.evidence.app.ui.screens.EmergencyScreen
 import com.pmfby.evidence.app.ui.screens.EvidenceHistoryScreen
@@ -25,11 +26,24 @@ import com.pmfby.evidence.app.ui.screens.VoiceMessageScreen
 fun AppNavigation() {
     val navController = rememberNavController()
     val app = LocalApp()
-    val startDestination = if (app.sessionManager.isSignedIn()) Routes.FARMERS else Routes.LOGIN
+    val startDestination = when {
+        !app.sessionManager.isSignedIn() -> Routes.LOGIN
+        app.sessionManager.forcePasswordChange() -> Routes.CHANGE_PASSWORD
+        else -> Routes.FARMERS
+    }
 
     NavHost(navController = navController, startDestination = startDestination) {
         composable(Routes.LOGIN) {
-            LoginScreen(onLoggedIn = { navController.navigateSingleTopClearingBackStack(Routes.FARMERS) })
+            LoginScreen(
+                onLoggedIn = {
+                    val next = if (app.sessionManager.forcePasswordChange()) Routes.CHANGE_PASSWORD else Routes.FARMERS
+                    navController.navigateSingleTopClearingBackStack(next)
+                },
+            )
+        }
+
+        composable(Routes.CHANGE_PASSWORD) {
+            ChangePasswordScreen(onDone = { navController.navigateSingleTopClearingBackStack(Routes.FARMERS) })
         }
 
         composable(Routes.FARMERS) {
