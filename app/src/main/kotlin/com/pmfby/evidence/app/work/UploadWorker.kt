@@ -10,8 +10,11 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.pmfby.evidence.app.PmfbyEvidenceApp
 import com.pmfby.evidence.app.data.local.OfflineEventEntity
+import com.pmfby.evidence.core.http.UploadOutcome
+import com.pmfby.evidence.core.http.UploadOutcomeClassifier
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
+import retrofit2.HttpException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -28,10 +31,14 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         val app = applicationContext as PmfbyEvidenceApp
         val dao = app.database.offlineEventDao()
         val api = app.apiService
+        val fileUploadApi = app.fileUploadApi
         val session = app.sessionManager
         val moshi: Moshi = app.moshi
         val mapAdapter = moshi.adapter<Map<String, Any?>>(
             Types.newParameterizedType(Map::class.java, String::class.java, Any::class.java),
+        )
+        val stringMapAdapter = moshi.adapter<Map<String, String>>(
+            Types.newParameterizedType(Map::class.java, String::class.java, String::class.java),
         )
 
         val auth = session.authHeader() ?: return Result.retry()
@@ -40,28 +47,61 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
 
         for (event in pending) {
             try {
-                val body = mapAdapter.fromJson(event.payloadJson) ?: emptyMap()
-                val bodyWithKey = body + ("idempotencyKey" to event.idempotencyKey)
                 when (event.kind) {
-                    "call_event" -> api.createCallEvent(auth, bodyWithKey)
-                    "message_event" -> api.createMessageEvent(auth, bodyWithKey)
-                    "emergency_incident" -> api.startEmergencyIncident(auth, bodyWithKey)
+                    "call_event" -> {
+                        val body = mapAdapter.fromJson(event.payloadJson) ?: emptyMap()
+                        api.createCallEvent(auth, body + ("idempotencyKey" to event.idempotencyKey))
+                    }
+                    "message_event" -> {
+                        val body = mapAdapter.fromJson(event.payloadJson) ?: emptyMap()
+                        api.createMessageEvent(auth, body + ("idempotencyKey" to event.idempotencyKey))
+                    }
+                    "emergency_incident" -> {
+                        val body = mapAdapter.fromJson(event.payloadJson) ?: emptyMap()
+                        api.startEmergencyIncident(auth, body + ("idempotencyKey" to event.idempotencyKey))
+                    }
+                    "evidence" -> {
+                        val filePath = event.filePath
+                        val file = filePath?.let { java.io.File(it) }
+                        if (file == null || !file.exists()) {
+                            // The locally-cached file is gone — nothing left to upload, ever.
+                            dao.update(event.copy(status = "failed", lastError = "Local file no longer exists: $filePath"))
+                            continue
+                        }
+                        val fields = stringMapAdapter.fromJson(event.payloadJson) ?: emptyMap()
+                        val mimeType = fields["mimeType"] ?: "application/octet-stream"
+                        fileUploadApi.uploadEvidence(auth, file, mimeType, fields + ("idempotencyKey" to event.idempotencyKey))
+                    }
                     else -> {
                         // Unknown kind — don't loop forever retrying something we can't send.
                         dao.update(event.copy(status = "failed", lastError = "Unknown queued event kind: ${event.kind}"))
                         continue
                     }
                 }
-                dao.delete(event.idempotencyKey)
+                // Marked 'uploaded' rather than deleted — the Upload Queue screen (task
+                // spec: "pending/uploaded/failed status") needs something to show for a
+                // row that just succeeded, not just its sudden disappearance.
+                dao.update(event.copy(status = "uploaded", lastError = null))
             } catch (e: Exception) {
-                anyFailure = true
-                dao.update(
-                    event.copy(
-                        status = "failed",
-                        attempts = event.attempts + 1,
-                        lastError = e.message ?: "Unknown error",
-                    ),
-                )
+                // Classified exactly like the deprecated prototype's httpHelpers
+                // .classifyUploadOutcome (see :core.http.UploadOutcomeClassifier, ported
+                // 1:1 and unit tested there): a 401/403/404/409 is never worth retrying
+                // again automatically (auth revoked, farmer reassigned, or a genuine
+                // conflict), everything else (5xx, or no HTTP response at all) is.
+                val statusCode = (e as? HttpException)?.code()
+                val outcome = UploadOutcomeClassifier.classify(statusCode)
+                if (outcome == UploadOutcome.TERMINAL_FAILURE) {
+                    dao.update(event.copy(status = "failed_permanent", attempts = event.attempts + 1, lastError = e.message))
+                } else {
+                    anyFailure = true
+                    dao.update(
+                        event.copy(
+                            status = "failed",
+                            attempts = event.attempts + 1,
+                            lastError = e.message ?: "Unknown error",
+                        ),
+                    )
+                }
             }
         }
 

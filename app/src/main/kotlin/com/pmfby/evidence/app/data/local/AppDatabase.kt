@@ -21,6 +21,12 @@ abstract class AppDatabase : RoomDatabase() {
         fun getInstance(context: Context): AppDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "pmfby-evidence.db")
+                    // This app has never shipped a release build (nothing has been
+                    // compiled or installed anywhere), so there is no real device data to
+                    // preserve across a schema change yet — destructive fallback instead
+                    // of a real Migration for now. Replace this with a proper Migration
+                    // before any actual release; see ROADMAP.md.
+                    .fallbackToDestructiveMigration()
                     .build()
                     .also { instance = it }
             }

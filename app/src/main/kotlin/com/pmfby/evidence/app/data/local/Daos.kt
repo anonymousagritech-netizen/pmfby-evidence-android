@@ -27,11 +27,32 @@ interface SurveyCaseDao {
     @Query("SELECT * FROM cached_cases WHERE farmerId = :farmerId ORDER BY lastSyncedAtMillis DESC")
     fun observeForFarmer(farmerId: String): Flow<List<SurveyCaseEntity>>
 
+    @Query("SELECT * FROM cached_cases ORDER BY lastSyncedAtMillis DESC")
+    fun observeAll(): Flow<List<SurveyCaseEntity>>
+
     @Query("SELECT * FROM cached_cases WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): SurveyCaseEntity?
 
+    @Query("SELECT * FROM cached_cases WHERE id = :id LIMIT 1")
+    fun observeById(id: String): Flow<SurveyCaseEntity?>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(cases: List<SurveyCaseEntity>)
+
+    /** Write-through update after a call outcome is actually submitted — see Entities.kt doc. */
+    @Query("UPDATE cached_cases SET lastCallOutcome = :outcome WHERE id = :caseId")
+    suspend fun updateLastCallOutcome(caseId: String, outcome: String)
+
+    /** Write-through update after an SMS composer hand-off is logged — see Entities.kt doc. */
+    @Query("UPDATE cached_cases SET lastMessageStatus = :status WHERE id = :caseId")
+    suspend fun updateLastMessageStatus(caseId: String, status: String)
+
+    /** Local-only update immediately after resolve-outcome succeeds, ahead of the next full refresh. */
+    @Query(
+        "UPDATE cached_cases SET contactStatus = :outcome, postponedUntil = :postponedUntil, " +
+            "closedAt = CASE WHEN :isClosing THEN :closedAtIso ELSE NULL END WHERE id = :caseId",
+    )
+    suspend fun updateLocalOutcome(caseId: String, outcome: String, postponedUntil: String?, isClosing: Boolean, closedAtIso: String?)
 }
 
 @Dao
@@ -39,6 +60,10 @@ interface OfflineEventDao {
     @Query("SELECT * FROM offline_queue ORDER BY createdAtMillis DESC")
     fun observeAll(): Flow<List<OfflineEventEntity>>
 
+    /**
+     * 'failed_permanent' (a 401/403/404/409 — see core.http.UploadOutcomeClassifier) is
+     * deliberately excluded: it is never retried automatically again.
+     */
     @Query("SELECT * FROM offline_queue WHERE status = 'pending' OR status = 'failed' ORDER BY createdAtMillis ASC")
     suspend fun getPending(): List<OfflineEventEntity>
 
@@ -50,4 +75,7 @@ interface OfflineEventDao {
 
     @Query("DELETE FROM offline_queue WHERE idempotencyKey = :key")
     suspend fun delete(key: String)
+
+    @Query("DELETE FROM offline_queue WHERE status = 'uploaded'")
+    suspend fun clearUploaded()
 }

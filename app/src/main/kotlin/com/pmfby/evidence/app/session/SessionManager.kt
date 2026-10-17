@@ -44,6 +44,17 @@ class SessionManager(context: Context) {
 
     fun authHeader(): String? = token()?.let { "Bearer $it" }
 
+    /**
+     * User-facing opt-in to the ACTION_CALL instant-call path (CallLauncher.callDirectly)
+     * instead of the default ACTION_DIAL. Stored here (not just "has the permission") so
+     * granting CALL_PHONE once doesn't silently switch calling behavior without the
+     * surveyor explicitly choosing it in Profile — see CallLauncher's class doc.
+     */
+    fun preferInstantCall(): Boolean = prefs.getBoolean(KEY_PREFER_INSTANT_CALL, false)
+    fun setPreferInstantCall(value: Boolean) {
+        prefs.edit().putBoolean(KEY_PREFER_INSTANT_CALL, value).apply()
+    }
+
     companion object {
         private const val KEY_TOKEN = "token"
         private const val KEY_USER_ID = "user_id"
@@ -51,5 +62,6 @@ class SessionManager(context: Context) {
         private const val KEY_NAME = "name"
         private const val KEY_SCOPE_STATE = "scope_state_id"
         private const val KEY_SCOPE_DISTRICT = "scope_district_id"
+        private const val KEY_PREFER_INSTANT_CALL = "prefer_instant_call"
     }
 }

@@ -2,6 +2,7 @@ package com.pmfby.evidence.app.data.repository
 
 import com.pmfby.evidence.app.data.local.OfflineEventDao
 import com.pmfby.evidence.app.data.local.OfflineEventEntity
+import com.pmfby.evidence.app.data.local.SurveyCaseDao
 import com.pmfby.evidence.app.data.remote.ApiService
 import com.pmfby.evidence.app.session.SessionManager
 import com.pmfby.evidence.core.idempotency.IdempotencyKey
@@ -29,11 +30,36 @@ class CaseActionsRepository(
     private val api: ApiService,
     private val session: SessionManager,
     private val offlineEventDao: OfflineEventDao,
+    private val caseDao: SurveyCaseDao,
     moshi: Moshi,
 ) {
     private val mapAdapter = moshi.adapter<Map<String, Any?>>(
         Types.newParameterizedType(Map::class.java, String::class.java, Any::class.java),
     )
+
+    /**
+     * Enqueues a FAILED multipart evidence upload (emergency audio/video, discrepancy
+     * photo) for WorkManager's UploadWorker to retry from, the same way a failed JSON
+     * action is queued — see [submitOrQueue]. [filePath] must point at a file this app
+     * still owns (its own cache dir); if that file is gone by the time the retry runs,
+     * UploadWorker marks the row permanently failed rather than looping forever.
+     */
+    suspend fun enqueueEvidenceForRetry(filePath: String, fields: Map<String, String>): String {
+        val key = IdempotencyKey.randomKey()
+        offlineEventDao.upsert(
+            OfflineEventEntity(
+                idempotencyKey = key,
+                kind = "evidence",
+                payloadJson = mapAdapter.toJson(fields),
+                filePath = filePath,
+                status = "pending",
+                attempts = 0,
+                lastError = null,
+                createdAtMillis = System.currentTimeMillis(),
+            ),
+        )
+        return key
+    }
 
     suspend fun submitCallEvent(caseId: String, phoneNumber: String, geo: Map<String, Any?>?): ActionResult =
         submitOrQueue("call_event", mapOf("caseId" to caseId, "phoneNumber" to phoneNumber, "geo" to geo)) { auth, key, body ->
@@ -45,7 +71,12 @@ class CaseActionsRepository(
             val auth = session.authHeader() ?: return@withContext ActionResult.Failed("Not signed in")
             try {
                 val body = mapOf("outcome" to outcome, "personContacted" to personContacted, "geo" to geo)
-                ActionResult.Submitted(api.updateCallOutcome(auth, callEventId, body))
+                val response = api.updateCallOutcome(auth, callEventId, body)
+                @Suppress("UNCHECKED_CAST")
+                val callEvent = response["callEvent"] as? Map<String, Any?>
+                val caseId = callEvent?.get("case_id")?.toString()
+                if (caseId != null) caseDao.updateLastCallOutcome(caseId, outcome)
+                ActionResult.Submitted(response)
             } catch (e: IOException) {
                 ActionResult.Failed("Offline — outcome update could not be queued (requires an existing call event id)")
             } catch (e: Exception) {
@@ -58,7 +89,16 @@ class CaseActionsRepository(
             val auth = session.authHeader() ?: return@withContext ActionResult.Failed("Not signed in")
             try {
                 val body = mapOf("outcome" to outcome, "reason" to reason, "postponedUntil" to postponedUntil)
-                ActionResult.Submitted(api.resolveCaseOutcome(auth, caseId, body))
+                val response = api.resolveCaseOutcome(auth, caseId, body)
+                val isClosing = outcome != "postponed"
+                caseDao.updateLocalOutcome(
+                    caseId = caseId,
+                    outcome = outcome,
+                    postponedUntil = if (outcome == "postponed") postponedUntil else null,
+                    isClosing = isClosing,
+                    closedAtIso = if (isClosing) java.time.Instant.now().toString() else null,
+                )
+                ActionResult.Submitted(response)
             } catch (e: Exception) {
                 ActionResult.Failed(e.message ?: "Could not resolve outcome")
             }
@@ -70,11 +110,18 @@ class CaseActionsRepository(
         renderedText: String,
         phoneNumber: String?,
         status: String,
-    ): ActionResult =
-        submitOrQueue(
+    ): ActionResult {
+        val result = submitOrQueue(
             "message_event",
             mapOf("caseId" to caseId, "templateId" to templateId, "renderedText" to renderedText, "phoneNumber" to phoneNumber, "status" to status),
         ) { auth, key, body -> api.createMessageEvent(auth, body + ("idempotencyKey" to key)) }
+        // Write through locally even if queued offline — the composer genuinely was (or
+        // will be) opened with this text, which is what the SMS_SENT tab actually tracks.
+        if (result is ActionResult.Submitted || result is ActionResult.QueuedOffline) {
+            withContext(Dispatchers.IO) { caseDao.updateLastMessageStatus(caseId, status) }
+        }
+        return result
+    }
 
     suspend fun submitEmergencyIncident(caseId: String, incidentType: String): ActionResult =
         submitOrQueue("emergency_incident", mapOf("caseId" to caseId, "incidentType" to incidentType)) { auth, key, body ->

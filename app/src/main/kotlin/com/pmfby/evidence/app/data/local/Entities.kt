@@ -30,6 +30,14 @@ data class SurveyCaseEntity(
     val closedAt: String?,
     val forcefulSurveyFlag: Boolean,
     val lastSyncedAtMillis: Long,
+    /**
+     * This device's own most recent call-outcome / SMS-composer status for this case —
+     * written locally right after a submission succeeds (see CaseActionsRepository and
+     * core.status.CaseStatusMapper's class doc for why these two fields exist only here
+     * and are never populated from the farmer-detail GET response).
+     */
+    val lastCallOutcome: String? = null,
+    val lastMessageStatus: String? = null,
 )
 
 /**
