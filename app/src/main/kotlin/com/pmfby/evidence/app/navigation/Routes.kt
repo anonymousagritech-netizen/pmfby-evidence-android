@@ -21,6 +21,11 @@ object Routes {
     const val SMS_PATTERN = "sms/{caseId}"
     fun sms(caseId: String) = "sms/$caseId"
 
+    /** Session-based SMS: one send covers all dockets in the farmer-batch. */
+    const val SMS_SESSION_PATTERN = "sms-session/{sessionId}"
+    fun smsSession(sessionId: String) = "sms-session/$sessionId"
+    const val ARG_SESSION_ID = "sessionId"
+
     const val EVIDENCE_HISTORY_PATTERN = "evidence/{caseId}"
     fun evidenceHistory(caseId: String) = "evidence/$caseId"
 

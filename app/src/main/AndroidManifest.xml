@@ -21,6 +21,13 @@
          ACTION_SENDTO) remains as the fallback if this permission is denied. -->
     <uses-permission android:name="android.permission.SEND_SMS" />
 
+    <!-- OS-verified SMS evidence: read sent messages from the system SMS database so the
+         surveyor has carrier-timestamped proof without a screenshot. The message text,
+         recipient, and timestamp are stored in the system SMS inbox/sent box and are
+         considered more authoritative than a photo of the screen. Only used after the
+         SMS send flow completes to read back the record for the sent message. -->
+    <uses-permission android:name="android.permission.READ_SMS" />
+
     <!-- Manual voice-note recording (post-call) and the emergency press-and-hold
          audio+video capture. -->
     <uses-permission android:name="android.permission.CAMERA" />

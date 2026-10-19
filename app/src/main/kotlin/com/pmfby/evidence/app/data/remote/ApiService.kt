@@ -102,4 +102,33 @@ interface ApiService {
 
     @POST("integrity-concerns")
     suspend fun reportIntegrityConcern(@Header("Authorization") auth: String, @Body body: Map<String, Any?>): Map<String, Any?>
+
+    // ── Contact Sessions ─────────────────────────────────────────────────────────
+    // One session per farmer-batch (same farmer + same intimation date).
+    // Evidence (call/SMS) recorded at session level covers ALL dockets in the batch.
+
+    @GET("contact-sessions/farmer/{farmerId}")
+    suspend fun getContactSessionsForFarmer(
+        @Header("Authorization") auth: String,
+        @Path("farmerId") farmerId: String,
+    ): Map<String, Any?>
+
+    @POST("contact-sessions")
+    suspend fun createContactSession(
+        @Header("Authorization") auth: String,
+        @Body body: Map<String, Any?>,
+    ): Map<String, Any?>
+
+    @PATCH("contact-sessions/{id}/outcome")
+    suspend fun setContactSessionOutcome(
+        @Header("Authorization") auth: String,
+        @Path("id") id: String,
+        @Body body: Map<String, Any?>,
+    ): Map<String, Any?>
+
+    @GET("contact-sessions/{id}")
+    suspend fun getContactSession(
+        @Header("Authorization") auth: String,
+        @Path("id") id: String,
+    ): Map<String, Any?>
 }

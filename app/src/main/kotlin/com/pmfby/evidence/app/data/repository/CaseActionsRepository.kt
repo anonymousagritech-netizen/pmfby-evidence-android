@@ -143,13 +143,23 @@ class CaseActionsRepository(
             "message_event",
             mapOf("caseId" to caseId, "templateId" to templateId, "renderedText" to renderedText, "phoneNumber" to phoneNumber, "status" to status),
         ) { auth, key, body -> api.createMessageEvent(auth, body + ("idempotencyKey" to key)) }
-        // Write through locally even if queued offline — the composer genuinely was (or
-        // will be) opened with this text, which is what the SMS_SENT tab actually tracks.
         if (result is ActionResult.Submitted || result is ActionResult.QueuedOffline) {
             withContext(Dispatchers.IO) { caseDao.updateLastMessageStatus(caseId, status) }
         }
         return result
     }
+
+    /** Session-based message event: covers all dockets in the batch, no single caseId. */
+    suspend fun submitMessageEventForSession(
+        sessionId: String,
+        templateId: String,
+        renderedText: String,
+        phoneNumber: String?,
+        status: String,
+    ): ActionResult = submitOrQueue(
+        "message_event",
+        mapOf("sessionId" to sessionId, "templateId" to templateId, "renderedText" to renderedText, "phoneNumber" to phoneNumber, "status" to status),
+    ) { auth, key, body -> api.createMessageEvent(auth, body + ("idempotencyKey" to key)) }
 
     suspend fun updateMessageStatus(messageEventId: String, status: String): ActionResult =
         withContext(Dispatchers.IO) {

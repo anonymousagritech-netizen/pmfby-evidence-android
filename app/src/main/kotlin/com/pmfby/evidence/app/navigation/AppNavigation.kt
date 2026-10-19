@@ -59,6 +59,7 @@ fun AppNavigation() {
                 farmerId = backStackEntry.requireArg(Routes.ARG_FARMER_ID),
                 onBack = { navController.popBackStack() },
                 onCaseClick = { caseId -> navController.navigate(Routes.caseDetail(caseId)) },
+                onSmsBatch = { sessionId -> navController.navigate(Routes.smsSession(sessionId)) },
             )
         }
 
@@ -85,6 +86,16 @@ fun AppNavigation() {
         composable(Routes.SMS_PATTERN) { backStackEntry ->
             SmsTemplateScreen(
                 caseId = backStackEntry.requireArg(Routes.ARG_CASE_ID),
+                sessionId = null,
+                onBack = { navController.popBackStack() },
+                onDone = { navController.popBackStack() },
+            )
+        }
+
+        composable(Routes.SMS_SESSION_PATTERN) { backStackEntry ->
+            SmsTemplateScreen(
+                caseId = null,
+                sessionId = backStackEntry.requireArg(Routes.ARG_SESSION_ID),
                 onBack = { navController.popBackStack() },
                 onDone = { navController.popBackStack() },
             )

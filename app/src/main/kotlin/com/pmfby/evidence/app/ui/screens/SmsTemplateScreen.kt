@@ -70,10 +70,10 @@ private fun templateColors(code: String): Pair<Color, Color> = when {
 }
 
 @Composable
-fun SmsTemplateScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
+fun SmsTemplateScreen(caseId: String?, sessionId: String?, onBack: () -> Unit, onDone: () -> Unit) {
     val context = LocalContext.current
     val viewModel = appViewModel { app ->
-        SmsTemplateViewModel(app, app.fileUploadApi, app.apiService, app.sessionManager, app.farmerRepository, app.caseActionsRepository, caseId)
+        SmsTemplateViewModel(app, app.fileUploadApi, app.apiService, app.sessionManager, app.farmerRepository, app.caseActionsRepository, caseId, sessionId)
     }
     val state by viewModel.uiState.collectAsState()
 
