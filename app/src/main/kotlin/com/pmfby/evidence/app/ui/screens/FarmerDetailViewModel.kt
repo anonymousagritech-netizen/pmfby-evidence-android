@@ -21,7 +21,8 @@ data class CaseBatch(
     val displayDate: String,
     val caseCount: Int,
     val docketIds: List<String>,
-    /** null = no prior contact for this batch */
+    /** null = no prior contact session for this batch */
+    val latestSessionId: String?,
     val latestSessionOutcome: String?,
     val latestContactedAt: String?,
 )
@@ -37,6 +38,9 @@ data class FarmerDetailUiState(
     val pendingCallSession: Pair<String, String>? = null,  // (sessionId, farmerMobile)
     /** Set when an SMS session is created → screen navigates to template screen then clears */
     val pendingSmsSessionId: String? = null,
+    /** Session awaiting outcome recording — shows the outcome bottom sheet */
+    val outcomeSessionId: String? = null,
+    val isSettingOutcome: Boolean = false,
 )
 
 class FarmerDetailViewModel(
@@ -48,10 +52,12 @@ class FarmerDetailViewModel(
 
     private val loading = MutableStateFlow(false)
     private val creatingSession = MutableStateFlow(false)
+    private val settingOutcome = MutableStateFlow(false)
     private val errorFlow = MutableStateFlow<String?>(null)
     private val pendingCallFlow = MutableStateFlow<Pair<String, String>?>(null)
     private val pendingSmsFlow = MutableStateFlow<String?>(null)
     private val batchesFlow = MutableStateFlow<List<CaseBatch>>(emptyList())
+    private val outcomeSessionFlow = MutableStateFlow<String?>(null)
 
     val uiState: StateFlow<FarmerDetailUiState> = combine(
         farmerRepository.observeCachedFarmers(),
@@ -78,6 +84,10 @@ class FarmerDetailViewModel(
             pendingSmsSessionId = arr[6] as String?,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), FarmerDetailUiState())
+
+    // Separate state for outcome sheet (can't fit in the 8-flow combine limit)
+    val outcomeSessionId: StateFlow<String?> = outcomeSessionFlow
+    val isSettingOutcome: StateFlow<Boolean> = settingOutcome
 
     init { refresh() }
 
@@ -109,6 +119,7 @@ class FarmerDetailViewModel(
                     displayDate = if (date == "unknown") "No Intimation Date" else date,
                     caseCount = (b["caseCount"] as? Number)?.toInt() ?: docketIds.size,
                     docketIds = docketIds,
+                    latestSessionId = latestSession?.get("id")?.toString(),
                     latestSessionOutcome = latestSession?.get("outcome")?.toString(),
                     latestContactedAt = latestSession?.get("contacted_at")?.toString(),
                 )
@@ -139,7 +150,9 @@ class FarmerDetailViewModel(
                 val sessionId = (response["session"] as? Map<String, Any?>)?.get("id")?.toString()
                 if (sessionId != null) {
                     pendingCallFlow.value = Pair(sessionId, phone)
-                    loadBatches() // refresh batch list to show new session
+                    // After dialer fires, show outcome sheet so user records what happened
+                    outcomeSessionFlow.value = sessionId
+                    loadBatches()
                 } else {
                     errorFlow.value = "Could not create call session"
                 }
@@ -150,6 +163,31 @@ class FarmerDetailViewModel(
             }
         }
     }
+
+    /** Records the outcome of a call/contact session. */
+    fun setCallOutcome(sessionId: String, outcome: String, surveyDate: String? = null) {
+        viewModelScope.launch {
+            val auth = session.authHeader() ?: run { errorFlow.value = "Not signed in"; return@launch }
+            settingOutcome.value = true
+            errorFlow.value = null
+            try {
+                val body = buildMap<String, Any?> {
+                    put("outcome", outcome)
+                    if (surveyDate != null) put("surveyScheduledDate", surveyDate)
+                }
+                api.setContactSessionOutcome(auth, sessionId, body)
+                outcomeSessionFlow.value = null
+                loadBatches()
+            } catch (e: Exception) {
+                errorFlow.value = e.message ?: "Could not record outcome"
+            } finally {
+                settingOutcome.value = false
+            }
+        }
+    }
+
+    fun showOutcomeSheet(sessionId: String) { outcomeSessionFlow.value = sessionId }
+    fun clearOutcomeSheet() { outcomeSessionFlow.value = null }
 
     /** Creates an "sms" session for this batch, then navigates to SmsTemplateScreen. */
     fun smsBatch(batch: CaseBatch) {
