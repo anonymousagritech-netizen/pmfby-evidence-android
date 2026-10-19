@@ -242,9 +242,9 @@ class SmsTemplateViewModel(
             }
             } // withTimeoutOrNull
             if (timedOut == null && !sawAnyResult) {
-                // Never heard back from the OS at all — record it as its own real status
-                // (never silently leave it as "sending") so this is visible as evidence too.
-                _uiState.update { it.copy(directSendStatus = "send_status_unknown") }
+                // MIUI/RCS interception: OS never called back — record evidence then auto-open
+                // the SMS composer so the surveyor can still send without extra taps.
+                _uiState.update { it.copy(directSendStatus = "send_status_unknown", composerOpened = true) }
                 caseActionsRepository.submitMessageEvent(caseId, templateId, renderedText, phone, "send_status_unknown")
             }
             _uiState.update { it.copy(isSending = false) }
