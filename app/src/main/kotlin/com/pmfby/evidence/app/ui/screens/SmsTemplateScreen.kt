@@ -38,6 +38,10 @@ fun SmsTemplateScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
         if (uri != null) viewModel.uploadScreenshot(uri)
     }
 
+    val requestSendSms = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) viewModel.sendDirectly()
+    }
+
     Scaffold(topBar = { PmfbyTopBar(title = "Send SMS", onBack = onBack) }) { padding ->
         if (state.isLoading) {
             FullScreenLoading()
@@ -58,7 +62,27 @@ fun SmsTemplateScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                 ) { Text(option.label) }
             }
 
-            if (state.composerOpened) {
+            if (state.directSendStatus != null) {
+                Card(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("Direct send status", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            when (state.directSendStatus) {
+                                "sending" -> "Sending…"
+                                "sent" -> "Sent ✓ (carrier accepted the message). Waiting for delivery confirmation…"
+                                "send_failed" -> "Send failed — the carrier/radio rejected the message. Try the SMS composer fallback below."
+                                "delivered" -> "Delivered ✓ — confirmed by the carrier."
+                                "delivery_failed" -> "Sent, but delivery failed (e.g. handset unreachable)."
+                                else -> state.directSendStatus.orEmpty()
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (state.directSendStatus in setOf("send_failed", "delivery_failed")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(vertical = 8.dp),
+                        )
+                        Button(onClick = onDone, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Done") }
+                    }
+                }
+            } else if (state.composerOpened) {
                 Card(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text("SMS app opened", style = MaterialTheme.typography.titleMedium)
@@ -96,16 +120,27 @@ fun SmsTemplateScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                     )
                 }
                 Button(
+                    onClick = { requestSendSms.launch(android.Manifest.permission.SEND_SMS) },
+                    enabled = !state.isSending,
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                ) { Text("Send SMS now") }
+                Text(
+                    "Sends directly and reports real carrier SENT/DELIVERED status — no screenshot needed.",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                OutlinedButton(
                     onClick = {
                         val opened = SmsComposer.openComposer(context, state.farmer?.farmerMobile, state.renderedText)
                         viewModel.markComposerResult(opened)
                     },
                     enabled = !state.isSending,
-                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                ) { Text("Open SMS composer") }
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                ) { Text("Fallback: open SMS composer") }
                 Text(
-                    "This only opens your phone's own SMS app with the text pre-filled — you " +
-                        "must press send yourself. The app has no way to confirm delivery.",
+                    "Use this if direct send is denied or fails — opens your phone's own SMS app; " +
+                        "you must press send yourself, and must attach a screenshot afterward.",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),

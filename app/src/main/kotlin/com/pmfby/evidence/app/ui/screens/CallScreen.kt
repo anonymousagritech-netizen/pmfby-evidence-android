@@ -1,5 +1,8 @@
 package com.pmfby.evidence.app.ui.screens
 
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
@@ -45,8 +48,18 @@ fun CallScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
         if (uri != null) viewModel.uploadCallRecording(uri)
     }
 
+    // RECORD_AUDIO is requested right before the call attempt so the automatic call-audio
+    // capture attempt (CallAudioRecorder) has a chance to start — if granted, startAutoRecording()
+    // is called; if denied, the manual "attach recording" flow below is still fully usable.
+    val requestRecordAudio = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) viewModel.startAutoRecording()
+    }
+
     LaunchedEffect(state.outcomeSubmitted) {
-        if (state.outcomeSubmitted) onDone()
+        if (state.outcomeSubmitted) {
+            viewModel.stopAndUploadAutoRecording()
+            onDone()
+        }
     }
 
     Scaffold(topBar = { PmfbyTopBar(title = "Call ${state.farmer?.farmerName ?: ""}", onBack = onBack) }) { padding ->
@@ -67,6 +80,7 @@ fun CallScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                 Button(
                     onClick = {
                         viewModel.startCallAttempt()
+                        requestRecordAudio.launch(android.Manifest.permission.RECORD_AUDIO)
                         val phone = state.farmer?.farmerMobile
                         if (!phone.isNullOrBlank()) {
                             val app = context.applicationContext as PmfbyEvidenceApp
@@ -115,9 +129,45 @@ fun CallScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                 Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text("Call recording", style = MaterialTheme.typography.titleMedium)
+                        when {
+                            state.autoRecordSource == "MIC" -> Text(
+                                "Automatic recording started (microphone only — this phone/Android version " +
+                                    "did not allow capturing the other party's audio directly).",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(vertical = 4.dp),
+                            )
+                            state.autoRecordSource != null && state.autoRecordSource != "" -> Text(
+                                "Automatic recording started (${state.autoRecordSource}) — will upload once you resolve this attempt.",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(vertical = 4.dp),
+                            )
+                            state.autoRecordAttempted -> Column {
+                                Text(
+                                    "Automatic recording was blocked by this phone's OS/manufacturer. On MIUI, " +
+                                        "this is usually a separate permission: Settings → Apps → PMFBY Evidence → " +
+                                        "Permissions → enable \"Record audio\" / \"Other permissions → Call recording\" " +
+                                        "if shown, then try again.",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(vertical = 4.dp),
+                                )
+                                OutlinedButton(onClick = {
+                                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+                                    context.startActivity(intent)
+                                }) { Text("Open app permission settings") }
+                            }
+                            else -> Text(
+                                "Record the call with your phone's own call recorder, then attach the file here " +
+                                    "if automatic capture isn't available.",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 4.dp),
+                            )
+                        }
                         Text(
-                            "Record the call with your phone's own call recorder, then attach the file here " +
-                                "(Android does not allow apps to record calls themselves).",
+                            "Manual fallback — attach a recording made with your phone's own call recorder:",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(vertical = 4.dp),

@@ -14,6 +14,7 @@ import com.pmfby.evidence.app.location.GeoTag
 import com.pmfby.evidence.app.data.remote.FileUploadApi
 import com.pmfby.evidence.app.location.LocationProvider
 import com.pmfby.evidence.app.session.SessionManager
+import com.pmfby.evidence.app.telephony.CallAudioRecorder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -61,6 +62,10 @@ data class CallUiState(
     val isSubmittingOutcome: Boolean = false,
     val outcomeSubmitted: Boolean = false,
     val error: String? = null,
+    /** Result of the automatic call-audio capture attempt — see CallAudioRecorder doc.
+     * null = not attempted yet, "" = attempted and failed on every audio source. */
+    val autoRecordSource: String? = null,
+    val autoRecordAttempted: Boolean = false,
 )
 
 class CallViewModel(
@@ -111,6 +116,59 @@ class CallViewModel(
                 }
             }
             _uiState.update { it.copy(isDialing = false, geoTag = geo, callEventId = callEventId) }
+        }
+    }
+
+    private var autoRecordFile: File? = null
+
+    /**
+     * Attempts automatic call-audio capture — call this right when the surveyor places the
+     * call (requires RECORD_AUDIO to already be granted; caller checks that). See
+     * CallAudioRecorder's doc for exactly what this can and cannot do on a given OS/OEM —
+     * it is a genuine attempt, not a guaranteed capability.
+     */
+    fun startAutoRecording() {
+        val file = File(appContext.cacheDir, "auto_call_${System.currentTimeMillis()}.m4a")
+        when (val result = CallAudioRecorder.start(appContext, file)) {
+            is CallAudioRecorder.StartResult.Started -> {
+                autoRecordFile = result.outputFile
+                _uiState.update { it.copy(autoRecordAttempted = true, autoRecordSource = result.source) }
+            }
+            is CallAudioRecorder.StartResult.Failed -> {
+                _uiState.update { it.copy(autoRecordAttempted = true, autoRecordSource = "") }
+            }
+        }
+    }
+
+    /** Stops the auto-recording (if one is running) and uploads it exactly like a manual
+     * voice-note recording — same backend endpoint, same consent flag (auto-capture implies
+     * the consent disclosure already shown before the call was placed). */
+    fun stopAndUploadAutoRecording() {
+        val stopped = CallAudioRecorder.stop()
+        val file = autoRecordFile
+        autoRecordFile = null
+        if (!stopped || file == null || !file.exists() || file.length() == 0L) {
+            file?.delete()
+            return
+        }
+        viewModelScope.launch {
+            val auth = session.authHeader() ?: return@launch
+            try {
+                withContext(Dispatchers.IO) {
+                    val fields = buildMap {
+                        put("caseId", caseId)
+                        put("kind", "phone_call_recording")
+                        put("consentAcknowledged", "true")
+                        _uiState.value.callEventId?.let { put("callEventId", it) }
+                    }
+                    fileUploadApi.uploadCallRecording(authHeader = auth, file = file, mimeType = "audio/mp4", fields = fields)
+                }
+                _uiState.update { it.copy(recordingUploaded = true) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = "Auto-recording upload failed: ${e.message}") }
+            } finally {
+                file.delete()
+            }
         }
     }
 

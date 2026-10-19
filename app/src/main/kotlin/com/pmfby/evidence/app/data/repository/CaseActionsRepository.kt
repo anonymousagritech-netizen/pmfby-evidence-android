@@ -151,6 +151,16 @@ class CaseActionsRepository(
         return result
     }
 
+    suspend fun updateMessageStatus(messageEventId: String, status: String): ActionResult =
+        withContext(Dispatchers.IO) {
+            val auth = session.authHeader() ?: return@withContext ActionResult.Failed("Not signed in")
+            try {
+                ActionResult.Submitted(api.updateMessageStatus(auth, messageEventId, mapOf("status" to status)))
+            } catch (e: Exception) {
+                ActionResult.Failed(e.message ?: "Could not update message status")
+            }
+        }
+
     suspend fun submitEmergencyIncident(caseId: String, incidentType: String): ActionResult =
         submitOrQueue("emergency_incident", mapOf("caseId" to caseId, "incidentType" to incidentType)) { auth, key, body ->
             api.startEmergencyIncident(auth, body + ("idempotencyKey" to key))

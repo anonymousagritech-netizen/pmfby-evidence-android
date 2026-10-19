@@ -11,10 +11,15 @@
     <uses-permission android:name="android.permission.CALL_PHONE" />
 
     <!-- Best-effort call-state observation (TelephonyManager) — see README for exactly
-         how unreliable this is across OEMs/Android versions. SEND_SMS is deliberately
-         NOT requested: SMS goes via an ACTION_SENDTO composer handoff, never sent
-         programmatically (see README "SMS: composer handoff, never ACTION_SEND"). -->
+         how unreliable this is across OEMs/Android versions. -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+
+    <!-- Direct SMS send (DirectSmsSender) — the primary send path, with real SENT/DELIVERED
+         carrier status instead of a screenshot. Viable because this app is sideloaded, not
+         Play-Store distributed (Play's SMS permissions policy restricts SEND_SMS to default
+         SMS-handler apps only for Play-distributed apps). Composer handoff (SmsComposer,
+         ACTION_SENDTO) remains as the fallback if this permission is denied. -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
 
     <!-- Manual voice-note recording (post-call) and the emergency press-and-hold
          audio+video capture. -->

@@ -12,6 +12,7 @@ import com.pmfby.evidence.app.data.repository.ActionResult
 import com.pmfby.evidence.app.data.repository.CaseActionsRepository
 import com.pmfby.evidence.app.data.repository.FarmerRepository
 import com.pmfby.evidence.app.session.SessionManager
+import com.pmfby.evidence.app.telephony.DirectSmsSender
 import com.pmfby.evidence.core.template.TemplateRenderer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -37,6 +38,8 @@ data class SmsTemplateUiState(
     val messageEventId: String? = null,
     val isUploadingScreenshot: Boolean = false,
     val screenshotUploaded: Boolean = false,
+    /** Direct-send (DirectSmsSender) status — null until attempted. */
+    val directSendStatus: String? = null,
 )
 
 /**
@@ -127,6 +130,49 @@ class SmsTemplateViewModel(
                     _uiState.update { it.copy(isSending = false, composerOpened = opened) }
                 is ActionResult.Failed -> _uiState.update { it.copy(isSending = false, error = result.message) }
             }
+        }
+    }
+
+    /**
+     * Primary send path: sends the rendered text directly via SmsManager (requires SEND_SMS,
+     * requested by the caller before invoking this) and records the REAL carrier-reported
+     * SENT/DELIVERED status — see DirectSmsSender doc. Falls back to the manual composer
+     * handoff is the caller's responsibility if SEND_SMS was denied; this function assumes
+     * the permission is already granted.
+     */
+    fun sendDirectly() {
+        val templateId = _uiState.value.selectedTemplateId ?: return
+        val renderedText = _uiState.value.renderedText
+        val phone = _uiState.value.farmer?.farmerMobile
+        if (phone.isNullOrBlank()) {
+            _uiState.update { it.copy(error = "No farmer mobile number on file") }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSending = true, composerOpened = true, directSendStatus = "sending") }
+            var messageEventId: String? = null
+            DirectSmsSender.send(appContext, phone, renderedText).collect { result ->
+                val status = when (result.stage) {
+                    DirectSmsSender.Stage.SENT -> "sent"
+                    DirectSmsSender.Stage.SENT_FAILED -> "send_failed"
+                    DirectSmsSender.Stage.DELIVERED -> "delivered"
+                    DirectSmsSender.Stage.DELIVERY_FAILED -> "delivery_failed"
+                    DirectSmsSender.Stage.DELIVERY_UNKNOWN -> "sent"
+                }
+                _uiState.update { it.copy(directSendStatus = status) }
+                if (messageEventId == null) {
+                    val submitResult = caseActionsRepository.submitMessageEvent(caseId, templateId, renderedText, phone, status)
+                    if (submitResult is ActionResult.Submitted) {
+                        @Suppress("UNCHECKED_CAST")
+                        messageEventId = (submitResult.serverResponse["messageEvent"] as? Map<String, Any?>)?.get("id")?.toString()
+                        _uiState.update { it.copy(messageEventId = messageEventId) }
+                    }
+                } else {
+                    // Delivery report arrived after the row already exists — patch its status.
+                    caseActionsRepository.updateMessageStatus(messageEventId!!, status)
+                }
+            }
+            _uiState.update { it.copy(isSending = false) }
         }
     }
 
