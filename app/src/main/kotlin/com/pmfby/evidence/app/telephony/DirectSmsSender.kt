@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.telephony.SmsManager
+import android.telephony.SubscriptionManager
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
 
@@ -57,13 +58,37 @@ object DirectSmsSender {
      * message that was never sent); otherwise it stays open for up to [deliveryTimeoutMs]
      * waiting for the delivery report, then closes with a DELIVERY_UNKNOWN result.
      */
-    fun send(context: Context, phoneNumber: String, body: String, deliveryTimeoutMs: Long = 20_000) = callbackFlow {
-        val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            context.getSystemService(SmsManager::class.java)
-        } else {
-            @Suppress("DEPRECATION") SmsManager.getDefault()
+    // Normalise an Indian mobile number to E.164 (+91XXXXXXXXXX) so that MIUI's RCS
+    // engine does not match the bare 10-digit number to an RCS profile and then route
+    // the send attempt through RCS (which may fail if the carrier or recipient doesn't
+    // support it). SmsManager ignores the +91 prefix for domestic SMS routing.
+    private fun toE164(number: String): String {
+        val digits = number.replace(Regex("\\D"), "")
+        return when {
+            digits.startsWith("91") && digits.length == 12 -> "+$digits"
+            digits.length == 10 -> "+91$digits"
+            else -> number // already formatted or unknown — pass through unchanged
         }
-        val parts = smsManager.divideMessage(body)
+    }
+
+    fun send(context: Context, phoneNumber: String, body: String, deliveryTimeoutMs: Long = 20_000) = callbackFlow {
+        // Use the subscription-ID-specific SmsManager so MIUI routes the message as SMS
+        // (not RCS) regardless of what the default Messages app defaults to.
+        @Suppress("DEPRECATION")
+        val smsManager: SmsManager = run {
+            val subId = SubscriptionManager.getDefaultSmsSubscriptionId()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val base = context.getSystemService(SmsManager::class.java)!!
+                if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) base.createForSubscriptionId(subId) else base
+            } else {
+                if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID)
+                    SmsManager.getSmsManagerForSubscriptionId(subId)
+                else
+                    SmsManager.getDefault()
+            }
+        }
+        val destination = toE164(phoneNumber)
+        val parts = smsManager.divideMessage(body) ?: arrayListOf(body)
         val sentIntents = arrayListOf<PendingIntent>()
         val deliveredIntents = arrayListOf<PendingIntent>()
         var sentCount = 0
@@ -103,7 +128,7 @@ object DirectSmsSender {
             deliveredIntents.add(PendingIntent.getBroadcast(context, i + 1000, Intent(ACTION_SMS_DELIVERED).setPackage(context.packageName), flags))
         }
         try {
-            smsManager.sendMultipartTextMessage(phoneNumber, null, parts, sentIntents, deliveredIntents)
+            smsManager.sendMultipartTextMessage(destination, null, parts, sentIntents, deliveredIntents)
         } catch (e: Exception) {
             trySend(Result(Stage.SENT_FAILED, -1))
             close()
