@@ -32,6 +32,20 @@ object DirectSmsSender {
 
     data class Result(val stage: Stage, val resultCode: Int)
 
+    /** Human-readable name for SmsManager's documented RESULT_ERROR_* result codes, so a
+     * failure can be diagnosed from the UI/logs instead of just "it failed". */
+    fun resultCodeName(code: Int): String = when (code) {
+        android.app.Activity.RESULT_OK -> "RESULT_OK"
+        SmsManager.RESULT_ERROR_GENERIC_FAILURE -> "RESULT_ERROR_GENERIC_FAILURE"
+        SmsManager.RESULT_ERROR_NO_SERVICE -> "RESULT_ERROR_NO_SERVICE (no cellular service for SMS — e.g. WiFi-only/VoWiFi without carrier SMS support)"
+        SmsManager.RESULT_ERROR_NULL_PDU -> "RESULT_ERROR_NULL_PDU"
+        SmsManager.RESULT_ERROR_RADIO_OFF -> "RESULT_ERROR_RADIO_OFF (airplane mode or radio disabled)"
+        SmsManager.RESULT_ERROR_LIMIT_EXCEEDED -> "RESULT_ERROR_LIMIT_EXCEEDED"
+        SmsManager.RESULT_ERROR_FDN_CHECK_FAILURE -> "RESULT_ERROR_FDN_CHECK_FAILURE (Fixed Dialing Numbers restriction)"
+        -1 -> "no result received at all"
+        else -> "unknown result code $code"
+    }
+
     private const val ACTION_SMS_SENT = "com.pmfby.evidence.app.SMS_SENT"
     private const val ACTION_SMS_DELIVERED = "com.pmfby.evidence.app.SMS_DELIVERED"
 

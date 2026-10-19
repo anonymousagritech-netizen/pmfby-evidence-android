@@ -107,6 +107,13 @@ fun SmsTemplateScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                             color = if (state.directSendStatus in setOf("send_failed", "delivery_failed")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(vertical = 8.dp),
                         )
+                        state.directSendResultDetail?.let {
+                            Text(
+                                "Reason: $it",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
                         Button(onClick = onDone, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Done") }
                     }
                 }

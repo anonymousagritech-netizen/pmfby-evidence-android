@@ -40,6 +40,9 @@ data class SmsTemplateUiState(
     val screenshotUploaded: Boolean = false,
     /** Direct-send (DirectSmsSender) status — null until attempted. */
     val directSendStatus: String? = null,
+    /** Diagnostic detail for a failure — the actual SmsManager RESULT_ERROR_* code name,
+     * so "it failed" has a real reason attached instead of being a dead end. */
+    val directSendResultDetail: String? = null,
     /** True when the selected template is FORMAT_2_POSTPONED — the picker must collect
      * postponedSurveyDate + postponeReason before a send is allowed (see Postponed_Survey_Date
      * / Postpone_Reason template placeholders, required server-side for this template). */
@@ -221,7 +224,10 @@ class SmsTemplateViewModel(
                     DirectSmsSender.Stage.DELIVERY_FAILED -> "delivery_failed"
                     DirectSmsSender.Stage.DELIVERY_UNKNOWN -> "sent"
                 }
-                _uiState.update { it.copy(directSendStatus = status) }
+                val detail = if (result.stage == DirectSmsSender.Stage.SENT_FAILED || result.stage == DirectSmsSender.Stage.DELIVERY_FAILED) {
+                    DirectSmsSender.resultCodeName(result.resultCode)
+                } else null
+                _uiState.update { it.copy(directSendStatus = status, directSendResultDetail = detail) }
                 if (messageEventId == null) {
                     val submitResult = caseActionsRepository.submitMessageEvent(caseId, templateId, renderedText, phone, status)
                     if (submitResult is ActionResult.Submitted) {
