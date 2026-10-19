@@ -206,7 +206,7 @@ class SmsTemplateViewModel(
             else -> rawPhone
         }
         viewModelScope.launch {
-            _uiState.update { it.copy(isSending = true, composerOpened = true, directSendStatus = "sending") }
+            _uiState.update { it.copy(isSending = true, directSendStatus = "sending") }
             var messageEventId: String? = null
             var sawAnyResult = false
             // DirectSmsSender's flow can legitimately wait a while for a DELIVERED report,
@@ -244,7 +244,10 @@ class SmsTemplateViewModel(
             if (timedOut == null && !sawAnyResult) {
                 // MIUI/RCS interception: OS never called back — record evidence then auto-open
                 // the SMS composer so the surveyor can still send without extra taps.
-                _uiState.update { it.copy(directSendStatus = "send_status_unknown", composerOpened = true) }
+                // Don't set composerOpened here — the LaunchedEffect in SmsTemplateScreen
+                // watches for send_status_unknown and calls SmsComposer.openComposer() then
+                // markComposerResult(), which sets composerOpened and records the event.
+                _uiState.update { it.copy(directSendStatus = "send_status_unknown") }
                 caseActionsRepository.submitMessageEvent(caseId, templateId, renderedText, phone, "send_status_unknown")
             }
             _uiState.update { it.copy(isSending = false) }

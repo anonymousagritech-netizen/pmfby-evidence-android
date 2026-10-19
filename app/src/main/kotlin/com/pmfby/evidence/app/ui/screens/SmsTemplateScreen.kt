@@ -246,8 +246,26 @@ fun SmsTemplateScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                 }
             }
 
+            // ── Sending in progress ──────────────────────────────────────────
+            if (state.directSendStatus == "sending") {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(14.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFEEF3F9)),
+                    elevation = CardDefaults.cardElevation(2.dp),
+                ) {
+                    Row(modifier = Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = Color(0xFF4F46E5))
+                        Spacer(Modifier.width(12.dp))
+                        Text("Sending SMS… waiting up to 25s for carrier reply", color = Color(0xFF1E3A5F), fontSize = 14.sp)
+                    }
+                }
+            }
+
             // ── Direct send result ───────────────────────────────────────────
-            if (state.directSendStatus != null && state.directSendStatus != "send_status_unknown") {
+            if (state.directSendStatus != null &&
+                state.directSendStatus != "send_status_unknown" &&
+                state.directSendStatus != "sending") {
                 val isSuccess = state.directSendStatus in setOf("sent", "delivered")
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(14.dp),
@@ -317,20 +335,40 @@ fun SmsTemplateScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                             color = Color(0xFF374151),
                             modifier = Modifier.padding(vertical = 8.dp),
                         )
+                        if (state.error != null) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFFEE2E2)),
+                            ) {
+                                Text(state.error.orEmpty(), color = Color(0xFFDC2626), modifier = Modifier.padding(10.dp), fontSize = 12.sp)
+                            }
+                        }
+                        if (state.screenshotUploaded) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFDCFCE7)),
+                            ) {
+                                Text("✓ Screenshot uploaded successfully", color = Color(0xFF16A34A), modifier = Modifier.padding(10.dp), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
                         OutlinedButton(
                             onClick = { screenshotPicker.launch("image/*") },
                             enabled = !state.isUploadingScreenshot,
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp),
                         ) {
-                            Text(
-                                when {
-                                    state.isUploadingScreenshot -> "Uploading screenshot…"
-                                    state.screenshotUploaded -> "Screenshot uploaded ✓ — attach another"
-                                    else -> "📸 Attach SMS Screenshot"
-                                },
-                                fontWeight = FontWeight.SemiBold,
-                            )
+                            if (state.isUploadingScreenshot) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Uploading…", fontWeight = FontWeight.SemiBold)
+                            } else {
+                                Text(
+                                    if (state.screenshotUploaded) "📸 Attach Another Screenshot" else "📸 Attach SMS Screenshot",
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
                         }
                         Spacer(Modifier.height(8.dp))
                         Button(
