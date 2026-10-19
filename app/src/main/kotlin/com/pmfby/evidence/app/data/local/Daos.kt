@@ -20,6 +20,17 @@ interface FarmerDao {
 
     @Query("DELETE FROM cached_farmers")
     suspend fun clear()
+
+    /**
+     * Removes any cached farmer NOT in [keepIds] — the reconcile half of a full sync.
+     * Without this, a farmer whose assignment was revoked/reassigned server-side (so a
+     * fresh GET /farmers no longer returns them) stayed in "My Assigned Farmers" forever,
+     * since upsertAll only ever adds/updates, never removes. Only call this after an
+     * UNFILTERED refresh (search == null) — a filtered search result is not the full
+     * assigned set and must never be used to reconcile deletes.
+     */
+    @Query("DELETE FROM cached_farmers WHERE id NOT IN (:keepIds)")
+    suspend fun deleteNotIn(keepIds: List<String>)
 }
 
 @Dao
@@ -38,6 +49,11 @@ interface SurveyCaseDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(cases: List<SurveyCaseEntity>)
+
+    /** Reconcile half of a full farmer sync — removes cached cases belonging to a farmer
+     * who is no longer in the surveyor's assigned set (see FarmerDao.deleteNotIn doc). */
+    @Query("DELETE FROM cached_cases WHERE farmerId NOT IN (:keepFarmerIds)")
+    suspend fun deleteForFarmersNotIn(keepFarmerIds: List<String>)
 
     /** Write-through update after a call outcome is actually submitted — see Entities.kt doc. */
     @Query("UPDATE cached_cases SET lastCallOutcome = :outcome WHERE id = :caseId")

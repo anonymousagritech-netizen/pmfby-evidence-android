@@ -55,6 +55,21 @@ class FarmerRepository(
                     )
                 },
             )
+            // Reconcile deletes — ONLY for a full, unfiltered refresh. upsertAll alone
+            // never removes a farmer whose assignment was revoked/reassigned server-side
+            // (GET /farmers simply stops returning them), which left stale rows in "My
+            // Assigned Farmers" forever. A filtered search result must never trigger this
+            // (it is not the full assigned set) — see FarmerDao.deleteNotIn doc.
+            if (search.isNullOrBlank()) {
+                val keepIds = dtos.map { it.id }
+                if (keepIds.isNotEmpty()) {
+                    farmerDao.deleteNotIn(keepIds)
+                    caseDao.deleteForFarmersNotIn(keepIds)
+                } else {
+                    farmerDao.clear()
+                    caseDao.deleteForFarmersNotIn(emptyList())
+                }
+            }
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
