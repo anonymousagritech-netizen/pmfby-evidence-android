@@ -84,14 +84,9 @@ fun SmsTemplateScreen(caseId: String?, sessionId: String?, onBack: () -> Unit, o
         if (granted) viewModel.sendDirectly()
     }
 
-    // When MIUI intercepts the SMS (send_status_unknown), auto-open the SMS composer
-    // so the surveyor can still send it manually without extra taps.
-    LaunchedEffect(state.directSendStatus) {
-        if (state.directSendStatus == "send_status_unknown" && !state.composerOpened) {
-            val opened = SmsComposer.openComposer(context, state.farmer?.farmerMobile, state.renderedText)
-            viewModel.markComposerResult(opened)
-        }
-    }
+    // Note: on MIUI/VoWiFi devices SmsManager callbacks never fire, so send_status_unknown
+    // means the SMS was likely sent at radio level but we got no carrier confirmation.
+    // We DO NOT auto-open the composer here — that caused double-sends via RCS which fail.
 
     Scaffold(topBar = {
         PmfbyTopBar(title = "Send SMS", onBack = onBack)
@@ -262,11 +257,12 @@ fun SmsTemplateScreen(caseId: String?, sessionId: String?, onBack: () -> Unit, o
                 }
             }
 
-            // ── Direct send result ───────────────────────────────────────────
-            if (state.directSendStatus != null &&
-                state.directSendStatus != "send_status_unknown" &&
-                state.directSendStatus != "sending") {
-                val isSuccess = state.directSendStatus in setOf("sent", "delivered")
+            // ── Direct send result (sent / delivered / failed / status_unknown) ─
+            val showDirectResult = state.directSendStatus != null &&
+                state.directSendStatus != "sending"
+            if (showDirectResult) {
+                val isUnknown = state.directSendStatus == "send_status_unknown"
+                val isSuccess = state.directSendStatus in setOf("sent", "delivered") || isUnknown
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(14.dp),
                     shape = RoundedCornerShape(16.dp),
@@ -286,11 +282,12 @@ fun SmsTemplateScreen(caseId: String?, sessionId: String?, onBack: () -> Unit, o
                             Spacer(Modifier.width(10.dp))
                             Text(
                                 when (state.directSendStatus) {
-                                    "sent" -> "SMS Sent ✓"
-                                    "delivered" -> "SMS Delivered ✓"
-                                    "send_failed" -> "Send Failed"
-                                    "delivery_failed" -> "Delivery Failed"
-                                    else -> state.directSendStatus.orEmpty()
+                                    "sent"               -> "SMS Sent ✓"
+                                    "delivered"          -> "SMS Delivered ✓"
+                                    "send_failed"        -> "Send Failed"
+                                    "delivery_failed"    -> "Delivery Failed"
+                                    "send_status_unknown" -> "SMS Sent ✓"
+                                    else                 -> state.directSendStatus.orEmpty()
                                 },
                                 fontWeight = FontWeight.Bold,
                                 color = if (isSuccess) GreenSuccess else RedEmergency,
@@ -299,16 +296,51 @@ fun SmsTemplateScreen(caseId: String?, sessionId: String?, onBack: () -> Unit, o
                         }
                         Text(
                             when (state.directSendStatus) {
-                                "sent" -> "Carrier accepted the message. Waiting for delivery confirmation…"
-                                "delivered" -> "Confirmed delivered by the carrier."
-                                "send_failed" -> "The carrier/radio rejected the message."
+                                "sent"               -> "Carrier accepted the message."
+                                "delivered"          -> "Confirmed delivered by the carrier."
+                                "send_failed"        -> "The carrier/radio rejected the message."
+                                "send_status_unknown" -> "SMS sent. Carrier confirmation unavailable on this device — take a screenshot of your SMS app as additional evidence."
                                 else -> state.directSendResultDetail ?: ""
                             },
                             modifier = Modifier.padding(top = 6.dp),
                             fontSize = 13.sp,
                             color = if (isSuccess) GreenSuccess else RedEmergency,
                         )
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(10.dp))
+                        // Step 1: open the SMS app so user can take a screenshot
+                        Button(
+                            onClick = {
+                                val phone = state.farmer?.farmerMobile ?: ""
+                                val digits = phone.filter { it.isDigit() }
+                                val smsUri = android.net.Uri.parse("smsto:$digits")
+                                context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, smsUri))
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0369A1)),
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            Text("📱 Open SMS App → Take Screenshot", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        // Step 2: come back and upload the screenshot
+                        if (state.screenshotUploaded) {
+                            Text("✓ Screenshot saved as evidence", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = GreenSuccess, modifier = Modifier.padding(vertical = 4.dp))
+                        }
+                        OutlinedButton(
+                            onClick = { screenshotPicker.launch("image/*") },
+                            enabled = !state.isUploadingScreenshot,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                        ) {
+                            if (state.isUploadingScreenshot) {
+                                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(6.dp))
+                                Text("Uploading…")
+                            } else {
+                                Text(if (state.screenshotUploaded) "📸 Attach Another Screenshot" else "📸 Upload SMS Screenshot")
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
                         Button(
                             onClick = onDone,
                             modifier = Modifier.fillMaxWidth(),
