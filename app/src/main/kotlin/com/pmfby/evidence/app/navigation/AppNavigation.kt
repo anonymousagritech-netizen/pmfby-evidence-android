@@ -69,11 +69,8 @@ fun AppNavigation() {
                 onBack = { navController.popBackStack() },
                 onCall = { navController.navigate(Routes.call(it)) },
                 onSms = { navController.navigate(Routes.sms(it)) },
-                onVoiceMessage = { navController.navigate(Routes.voiceMessage(it)) },
                 onEvidenceHistory = { navController.navigate(Routes.evidenceHistory(it)) },
                 onEmergency = { navController.navigate(Routes.emergency(it)) },
-                onDiscrepancy = { navController.navigate(Routes.discrepancy(it)) },
-                onIntegrityConcern = { navController.navigate(Routes.INTEGRITY_CONCERN) },
             )
         }
 

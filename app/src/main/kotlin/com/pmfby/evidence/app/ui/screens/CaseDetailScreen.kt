@@ -8,8 +8,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
-import androidx.compose.material.icons.filled.Flag
-import androidx.compose.material.icons.filled.Gavel
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.Warning
@@ -45,11 +43,8 @@ fun CaseDetailScreen(
     onBack: () -> Unit,
     onCall: (String) -> Unit,
     onSms: (String) -> Unit,
-    onVoiceMessage: (String) -> Unit,
     onEvidenceHistory: (String) -> Unit,
     onEmergency: (String) -> Unit,
-    onDiscrepancy: (String) -> Unit,
-    onIntegrityConcern: () -> Unit,
 ) {
     val viewModel = appViewModel { app -> CaseDetailViewModel(app.farmerRepository, app.caseActionsRepository, caseId) }
     val state by viewModel.uiState.collectAsState()
@@ -78,10 +73,7 @@ fun CaseDetailScreen(
             Text("Actions", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 16.dp))
             ActionRow("Call farmer", Icons.Filled.Call) { onCall(caseId) }
             ActionRow("Send SMS", Icons.Filled.Sms) { onSms(caseId) }
-            ActionRow("Play voice message", Icons.Filled.Sms) { onVoiceMessage(caseId) }
             ActionRow("Evidence history", Icons.Filled.History) { onEvidenceHistory(caseId) }
-            ActionRow("Flag suspected discrepancy", Icons.Filled.Flag) { onDiscrepancy(caseId) }
-            ActionRow("Report integrity concern (confidential)", Icons.Filled.Gavel) { onIntegrityConcern() }
 
             Button(
                 onClick = { onEmergency(caseId) },
@@ -96,8 +88,8 @@ fun CaseDetailScreen(
 
             val isClosed = state.case?.contactStatus == "completed"
             if (!isClosed) {
-                OutcomeResolutionSection(enabled = !state.isSubmitting) { outcome, reason, postponedUntil ->
-                    viewModel.resolveOutcome(outcome, reason, postponedUntil)
+                OutcomeResolutionSection(enabled = !state.isSubmitting) { outcome, reason, farmerAgreedToPostpone, postponedUntil ->
+                    viewModel.resolveOutcome(outcome, reason, farmerAgreedToPostpone, postponedUntil)
                 }
                 Button(
                     onClick = { showCompleteDialog = true },

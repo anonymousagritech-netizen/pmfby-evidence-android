@@ -61,10 +61,21 @@ class CaseActionsRepository(
         return key
     }
 
-    suspend fun submitCallEvent(caseId: String, phoneNumber: String, geo: Map<String, Any?>?): ActionResult =
-        submitOrQueue("call_event", mapOf("caseId" to caseId, "phoneNumber" to phoneNumber, "geo" to geo)) { auth, key, body ->
+    suspend fun submitCallEvent(caseId: String, phoneNumber: String, geo: Map<String, Any?>?): ActionResult {
+        val result = submitOrQueue("call_event", mapOf("caseId" to caseId, "phoneNumber" to phoneNumber, "geo" to geo)) { auth, key, body ->
             api.createCallEvent(auth, body + ("idempotencyKey" to key))
         }
+        // Write through the server-assigned attempt_no immediately — see Daos.kt
+        // updateAttemptCount doc. Without this the case list kept showing "Attempt #0"
+        // after a real call because the cache was never refreshed.
+        if (result is ActionResult.Submitted) {
+            @Suppress("UNCHECKED_CAST")
+            val callEvent = result.serverResponse["callEvent"] as? Map<String, Any?>
+            val attemptNo = (callEvent?.get("attempt_no") as? Number)?.toInt()
+            if (attemptNo != null) withContext(Dispatchers.IO) { caseDao.updateAttemptCount(caseId, attemptNo) }
+        }
+        return result
+    }
 
     suspend fun submitCallOutcome(callEventId: String, outcome: String, personContacted: Map<String, Any?>?, geo: Map<String, Any?>?): ActionResult =
         withContext(Dispatchers.IO) {
@@ -84,11 +95,28 @@ class CaseActionsRepository(
             }
         }
 
-    suspend fun resolveCaseOutcome(caseId: String, outcome: String, reason: String?, postponedUntil: String?): ActionResult =
+    suspend fun resolveCaseOutcome(
+        caseId: String,
+        outcome: String,
+        reason: String?,
+        farmerAgreedToPostpone: Boolean?,
+        postponedUntil: String?,
+        callEventId: String? = null,
+    ): ActionResult =
         withContext(Dispatchers.IO) {
             val auth = session.authHeader() ?: return@withContext ActionResult.Failed("Not signed in")
             try {
-                val body = mapOf("outcome" to outcome, "reason" to reason, "postponedUntil" to postponedUntil)
+                // When callEventId is known (CallScreen's own resolve flow) it is sent so this
+                // outcome attaches to the exact attempt it belongs to; otherwise the backend
+                // falls back to the case's most recent call_event — either way the per-attempt
+                // activity export still gets a row — see backend cases.js resolve-outcome.
+                val body = mapOf(
+                    "outcome" to outcome,
+                    "reason" to reason,
+                    "farmerAgreedToPostpone" to farmerAgreedToPostpone,
+                    "postponedUntil" to postponedUntil,
+                    "callEventId" to callEventId,
+                )
                 val response = api.resolveCaseOutcome(auth, caseId, body)
                 val isClosing = outcome != "postponed"
                 caseDao.updateLocalOutcome(

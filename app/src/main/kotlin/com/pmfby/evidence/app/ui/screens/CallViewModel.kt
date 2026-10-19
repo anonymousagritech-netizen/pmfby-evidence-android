@@ -211,10 +211,13 @@ class CallViewModel(
     }
 
     /** The mandatory outcome-resolution loop — see CaseResolutionOutcome doc. */
-    fun resolveCaseOutcome(outcome: CaseResolutionOutcome, reason: String?, postponedUntilIso: String?) {
+    fun resolveCaseOutcome(outcome: CaseResolutionOutcome, reason: String?, farmerAgreedToPostpone: Boolean?, postponedUntilIso: String?) {
         viewModelScope.launch {
             _uiState.update { it.copy(isSubmittingOutcome = true, error = null) }
-            val result = caseActionsRepository.resolveCaseOutcome(caseId, outcome.wireValue, reason, postponedUntilIso)
+            val result = caseActionsRepository.resolveCaseOutcome(
+                caseId, outcome.wireValue, reason, farmerAgreedToPostpone, postponedUntilIso,
+                callEventId = _uiState.value.callEventId,
+            )
             when (result) {
                 is ActionResult.Submitted -> _uiState.update { it.copy(isSubmittingOutcome = false, outcomeSubmitted = true) }
                 is ActionResult.Failed -> _uiState.update { it.copy(isSubmittingOutcome = false, error = result.message) }

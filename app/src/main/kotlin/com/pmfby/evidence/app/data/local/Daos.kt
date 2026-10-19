@@ -43,6 +43,16 @@ interface SurveyCaseDao {
     @Query("UPDATE cached_cases SET lastCallOutcome = :outcome WHERE id = :caseId")
     suspend fun updateLastCallOutcome(caseId: String, outcome: String)
 
+    /**
+     * Write-through update immediately after a call_event is created and the server returns
+     * the new attempt_no (attempt_count is incremented server-side, atomically, in the same
+     * transaction as the call_events insert — see backend callEvents.js). Without this, the
+     * cached case list keeps showing the stale attempt number until the next full sync, which
+     * is why "Attempt #0" appeared to never change after real calls were made.
+     */
+    @Query("UPDATE cached_cases SET attemptCount = :attemptCount WHERE id = :caseId")
+    suspend fun updateAttemptCount(caseId: String, attemptCount: Int)
+
     /** Write-through update after an SMS composer hand-off is logged — see Entities.kt doc. */
     @Query("UPDATE cached_cases SET lastMessageStatus = :status WHERE id = :caseId")
     suspend fun updateLastMessageStatus(caseId: String, status: String)

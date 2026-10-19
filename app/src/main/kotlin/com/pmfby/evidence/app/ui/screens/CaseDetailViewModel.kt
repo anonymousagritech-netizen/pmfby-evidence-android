@@ -51,11 +51,11 @@ class CaseDetailViewModel(
     }
 
     /** The mandatory outcome-resolution loop (non-completed outcomes only — see CaseResolutionOutcome). */
-    fun resolveOutcome(outcome: CaseResolutionOutcome, reason: String?, postponedUntilIso: String?) {
+    fun resolveOutcome(outcome: CaseResolutionOutcome, reason: String?, farmerAgreedToPostpone: Boolean?, postponedUntilIso: String?) {
         viewModelScope.launch {
             submitting.value = true
             error.value = null
-            val result = caseActionsRepository.resolveCaseOutcome(caseId, outcome.wireValue, reason, postponedUntilIso)
+            val result = caseActionsRepository.resolveCaseOutcome(caseId, outcome.wireValue, reason, farmerAgreedToPostpone, postponedUntilIso)
             applyResult(result, "Outcome recorded: ${outcome.name.lowercase().replace('_', ' ')}")
         }
     }
@@ -65,7 +65,7 @@ class CaseDetailViewModel(
         viewModelScope.launch {
             submitting.value = true
             error.value = null
-            val result = caseActionsRepository.resolveCaseOutcome(caseId, "completed", reason, null)
+            val result = caseActionsRepository.resolveCaseOutcome(caseId, "completed", reason, null, null)
             applyResult(result, "Survey marked completed")
         }
     }

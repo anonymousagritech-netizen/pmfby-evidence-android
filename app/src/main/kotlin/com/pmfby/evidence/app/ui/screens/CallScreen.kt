@@ -153,8 +153,8 @@ fun CallScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
-                OutcomeResolutionSection(enabled = !state.isSubmittingOutcome) { outcome, reason, postponedUntil ->
-                    viewModel.resolveCaseOutcome(outcome, reason, postponedUntil)
+                OutcomeResolutionSection(enabled = !state.isSubmittingOutcome) { outcome, reason, farmerAgreedToPostpone, postponedUntil ->
+                    viewModel.resolveCaseOutcome(outcome, reason, farmerAgreedToPostpone, postponedUntil)
                 }
             }
         }
