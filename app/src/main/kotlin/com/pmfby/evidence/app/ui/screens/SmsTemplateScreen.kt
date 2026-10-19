@@ -62,6 +62,34 @@ fun SmsTemplateScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                 ) { Text(option.label) }
             }
 
+            if (state.selectedTemplateCode == "FORMAT_2_POSTPONED" && !state.composerOpened && state.directSendStatus == null) {
+                Card(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("Postponed — required details", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "This template needs the new date and a reason before it can be sent " +
+                                "(same facts recorded by \"Resolve this attempt\" → Postponed).",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 8.dp),
+                        )
+                        androidx.compose.material3.OutlinedTextField(
+                            value = state.postponedSurveyDate,
+                            onValueChange = viewModel::onPostponedSurveyDateChange,
+                            label = { Text("New survey date (YYYY-MM-DD)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        androidx.compose.material3.OutlinedTextField(
+                            value = state.postponeReason,
+                            onValueChange = viewModel::onPostponeReasonChange,
+                            label = { Text("Reason for postponement") },
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        )
+                    }
+                }
+            }
+
             if (state.directSendStatus != null) {
                 Card(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -121,7 +149,7 @@ fun SmsTemplateScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                 }
                 Button(
                     onClick = { requestSendSms.launch(android.Manifest.permission.SEND_SMS) },
-                    enabled = !state.isSending,
+                    enabled = !state.isSending && !viewModel.isPostponeDataMissing(),
                     modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
                 ) { Text("Send SMS now") }
                 Text(
@@ -135,7 +163,7 @@ fun SmsTemplateScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                         val opened = SmsComposer.openComposer(context, state.farmer?.farmerMobile, state.renderedText)
                         viewModel.markComposerResult(opened)
                     },
-                    enabled = !state.isSending,
+                    enabled = !state.isSending && !viewModel.isPostponeDataMissing(),
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 ) { Text("Fallback: open SMS composer") }
                 Text(

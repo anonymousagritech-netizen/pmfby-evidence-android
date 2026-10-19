@@ -76,15 +76,20 @@ fun EmergencyScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                     Text("Starting…", style = MaterialTheme.typography.titleMedium)
                 }
                 EmergencyPhase.RECORDING -> {
+                    // Deliberately understated — this screen can be in view of the person
+                    // the surveyor feels unsafe around, not just the surveyor. No red
+                    // circle, no "RECORDING" in caps; the surveyor already knows it's
+                    // running (they started it). See LIMITATIONS.md "discreet, not
+                    // invisible" — the OS privacy indicator dot still shows regardless.
                     Box(
                         modifier = Modifier
                             .size(140.dp)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.errorContainer),
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
                         contentAlignment = Alignment.Center,
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("● RECORDING", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
+                            Text("Active", style = MaterialTheme.typography.titleMedium)
                             Text("${state.elapsedSeconds}s / ${state.elapsedSeconds + state.remainingSeconds}s")
                         }
                     }
@@ -92,7 +97,7 @@ fun EmergencyScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                         onClick = viewModel::releaseCapture,
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                         modifier = Modifier.padding(top = 24.dp),
-                    ) { Text("Stop recording") }
+                    ) { Text("Stop") }
                     OutlinedButton(onClick = viewModel::cancelCapture, modifier = Modifier.padding(top = 8.dp)) {
                         Text("Cancel (discard, nothing uploaded)")
                     }

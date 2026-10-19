@@ -77,6 +77,31 @@ crash-recovery cleanup (partial-file deletion on cancel) behaves correctly when 
 process is actually killed mid-recording rather than cleanly stopped — there is no
 WorkManager-based "orphaned partial file" sweep implemented yet (see ROADMAP.md).
 
+## Emergency capture: discreet, not invisible
+
+The in-app "RECORDING" indicator and the foreground-service notification were both
+deliberately toned down: the RECORDING screen now shows a neutral "Active" state (no red
+circle, no capitalized "RECORDING") and the persistent notification Android requires for
+any foreground service capturing audio/video reads "PMFBY Field Evidence — App active"
+rather than naming recording or emergency — both changes aimed at a hostile bystander
+glancing at the phone, not at the surveyor, who already knows capture is running because
+they triggered it.
+
+This is **discreet, not invisible**, and cannot be made fully invisible by this or any
+app: Android 8+ legally requires a persistent, user-visible notification for any
+foreground service (we control its wording, not whether it exists), and Android 12+ shows
+its own camera/microphone privacy indicator dot in the status bar whenever either is in
+use — no app can suppress or hide that dot, by design, because that protection exists
+specifically to stop apps from doing covert surveillance. This app does not attempt to
+work around either restriction.
+
+Background/screen-off reliability (the capture surviving the app being backgrounded or
+the screen turning off) relies on `EmergencyCaptureService` already being a proper
+Android foreground service, which is the standard mechanism for this — but this was not
+re-verified live on a real device with the screen off in this pass; see "Emergency
+capture — what it honestly is and isn't" above for what has and hasn't been confirmed on
+real hardware.
+
 ## Farmer-list status tabs are an approximation, not ground truth
 
 "Call not answered" and "SMS sent" are derived from `lastCallOutcome`/`lastMessageStatus`

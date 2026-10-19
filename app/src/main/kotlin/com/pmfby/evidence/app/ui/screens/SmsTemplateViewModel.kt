@@ -40,6 +40,12 @@ data class SmsTemplateUiState(
     val screenshotUploaded: Boolean = false,
     /** Direct-send (DirectSmsSender) status — null until attempted. */
     val directSendStatus: String? = null,
+    /** True when the selected template is FORMAT_2_POSTPONED — the picker must collect
+     * postponedSurveyDate + postponeReason before a send is allowed (see Postponed_Survey_Date
+     * / Postpone_Reason template placeholders, required server-side for this template). */
+    val selectedTemplateCode: String? = null,
+    val postponedSurveyDate: String = "",
+    val postponeReason: String = "",
 )
 
 /**
@@ -96,11 +102,49 @@ class SmsTemplateViewModel(
     }
 
     fun selectTemplate(templateId: String) {
-        _uiState.update { it.copy(selectedTemplateId = templateId, renderedText = "", missingFields = emptyList()) }
+        val code = _uiState.value.templates.firstOrNull { it.id == templateId }?.code
+        _uiState.update {
+            it.copy(
+                selectedTemplateId = templateId, selectedTemplateCode = code,
+                renderedText = "", missingFields = emptyList(),
+                postponedSurveyDate = "", postponeReason = "",
+            )
+        }
+        reRender()
+    }
+
+    fun onPostponedSurveyDateChange(value: String) {
+        _uiState.update { it.copy(postponedSurveyDate = value) }
+        reRender()
+    }
+
+    fun onPostponeReasonChange(value: String) {
+        _uiState.update { it.copy(postponeReason = value) }
+        reRender()
+    }
+
+    /** True until a Postponed template's required fields are filled — gates both send paths
+     * (direct send and composer) so neither can be used with unfilled placeholders. */
+    fun isPostponeDataMissing(): Boolean {
+        val state = _uiState.value
+        return state.selectedTemplateCode == "FORMAT_2_POSTPONED" &&
+            (state.postponedSurveyDate.isBlank() || state.postponeReason.isBlank())
+    }
+
+    private fun reRender() {
+        val templateId = _uiState.value.selectedTemplateId ?: return
         viewModelScope.launch {
             val auth = session.authHeader() ?: return@launch
             try {
-                val response = api.renderTemplate(auth, templateId, mapOf("caseId" to caseId))
+                val state = _uiState.value
+                val body = buildMap<String, Any?> {
+                    put("caseId", caseId)
+                    if (state.selectedTemplateCode == "FORMAT_2_POSTPONED") {
+                        put("postponedSurveyDate", state.postponedSurveyDate.ifBlank { null })
+                        put("postponeReason", state.postponeReason.ifBlank { null })
+                    }
+                }
+                val response = api.renderTemplate(auth, templateId, body)
                 val rendered = response["rendered"]?.toString().orEmpty()
                 @Suppress("UNCHECKED_CAST")
                 val missing = (response["missing"] as? List<String>).orEmpty()
@@ -143,15 +187,33 @@ class SmsTemplateViewModel(
     fun sendDirectly() {
         val templateId = _uiState.value.selectedTemplateId ?: return
         val renderedText = _uiState.value.renderedText
-        val phone = _uiState.value.farmer?.farmerMobile
-        if (phone.isNullOrBlank()) {
+        val rawPhone = _uiState.value.farmer?.farmerMobile
+        if (rawPhone.isNullOrBlank()) {
             _uiState.update { it.copy(error = "No farmer mobile number on file") }
             return
+        }
+        // Normalize to +91<10 digits> — a bare 10-digit number usually works fine with
+        // SmsManager on an Indian SIM, but some carriers/OEMs are stricter; this removes
+        // that as a possible silent cause of a send that never completes.
+        val digits = rawPhone.filter { it.isDigit() }
+        val phone = when {
+            digits.length == 10 -> "+91$digits"
+            digits.length == 12 && digits.startsWith("91") -> "+$digits"
+            rawPhone.startsWith("+") -> rawPhone
+            else -> rawPhone
         }
         viewModelScope.launch {
             _uiState.update { it.copy(isSending = true, composerOpened = true, directSendStatus = "sending") }
             var messageEventId: String? = null
+            var sawAnyResult = false
+            // DirectSmsSender's flow can legitimately wait a while for a DELIVERED report,
+            // but if the OS never even calls back SENT at all — observed on this device,
+            // likely because the SIM/radio wasn't actually ready to send — the UI used to
+            // hang on "Sending…" forever. 25s timeout turns that into a visible, honest
+            // "unknown" status instead of an infinite spinner.
+            val timedOut = kotlinx.coroutines.withTimeoutOrNull(25_000) {
             DirectSmsSender.send(appContext, phone, renderedText).collect { result ->
+                sawAnyResult = true
                 val status = when (result.stage) {
                     DirectSmsSender.Stage.SENT -> "sent"
                     DirectSmsSender.Stage.SENT_FAILED -> "send_failed"
@@ -171,6 +233,13 @@ class SmsTemplateViewModel(
                     // Delivery report arrived after the row already exists — patch its status.
                     caseActionsRepository.updateMessageStatus(messageEventId!!, status)
                 }
+            }
+            } // withTimeoutOrNull
+            if (timedOut == null && !sawAnyResult) {
+                // Never heard back from the OS at all — record it as its own real status
+                // (never silently leave it as "sending") so this is visible as evidence too.
+                _uiState.update { it.copy(directSendStatus = "send_status_unknown") }
+                caseActionsRepository.submitMessageEvent(caseId, templateId, renderedText, phone, "send_status_unknown")
             }
             _uiState.update { it.copy(isSending = false) }
         }

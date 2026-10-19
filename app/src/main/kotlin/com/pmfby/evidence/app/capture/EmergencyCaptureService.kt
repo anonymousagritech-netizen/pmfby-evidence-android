@@ -167,11 +167,23 @@ class EmergencyCaptureService : LifecycleService() {
         stopSelf()
     }
 
+    /**
+     * Deliberately bland, generic wording/icon — Android requires SOME persistent
+     * notification for any foreground service capturing audio/video (hard OS rule since
+     * Android 8, cannot be suppressed by this or any app), but its CONTENT is under our
+     * control. This reads like routine background app activity rather than a recording
+     * indicator, so a hostile bystander glancing at the phone sees nothing alarming — the
+     * surveyor themselves already knows capture is running (they triggered it). This does
+     * NOT and cannot hide Android 12+'s camera/mic privacy indicator dot — that is an
+     * OS-level protection no app can suppress, and attempting to work around it would be
+     * exactly the kind of covert-surveillance anti-pattern that protection exists to stop.
+     * See LIMITATIONS.md "Emergency capture: discreet, not invisible".
+     */
     private fun buildNotification(elapsedSeconds: Int): Notification {
-        val channelId = "emergency_capture_v2"
+        val channelId = "app_active_v1"
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(channelId, "Emergency recording", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(channelId, "App activity", NotificationManager.IMPORTANCE_LOW)
             manager.createNotificationChannel(channel)
         }
         val openAppIntent = PendingIntent.getActivity(
@@ -179,9 +191,9 @@ class EmergencyCaptureService : LifecycleService() {
             PendingIntent.FLAG_IMMUTABLE,
         )
         return NotificationCompat.Builder(this, channelId)
-            .setContentTitle("Emergency recording in progress")
-            .setContentText("Elapsed: ${elapsedSeconds}s / ${EmergencyTimerController.HARD_CAP_SECONDS}s — tap to return to the app")
-            .setSmallIcon(android.R.drawable.ic_menu_report_image)
+            .setContentTitle("PMFBY Field Evidence")
+            .setContentText("App active")
+            .setSmallIcon(android.R.drawable.ic_menu_myplaces)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(openAppIntent)
