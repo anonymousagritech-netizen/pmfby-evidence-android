@@ -350,6 +350,45 @@ private fun BatchCard(
 
             Spacer(Modifier.height(12.dp))
 
+            // SMS evidence block — shown whenever an SMS session exists for this batch
+            if (batch.smsCount > 0 || batch.contactType == "sms") {
+                val smsStatusColor = when (batch.lastSmsStatus) {
+                    "sent", "delivered" -> GreenSuccess
+                    "send_failed", "delivery_failed" -> RedEmergency
+                    else -> Color(0xFF7C3AED)
+                }
+                val smsStatusLabel = when (batch.lastSmsStatus) {
+                    "sent" -> "✅ SMS Sent"
+                    "delivered" -> "✅ SMS Delivered"
+                    "send_failed" -> "❌ Send Failed"
+                    "delivery_failed" -> "❌ Delivery Failed"
+                    "send_status_unknown" -> "📱 SMS Sent (unconfirmed)"
+                    else -> "💬 SMS Sent"
+                }
+                Spacer(Modifier.height(8.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F3FF)),
+                    elevation = CardDefaults.cardElevation(0.dp),
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(smsStatusLabel, fontWeight = FontWeight.Bold, color = smsStatusColor, fontSize = 13.sp)
+                        }
+                        if (!batch.lastSmsText.isNullOrBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                batch.lastSmsText.take(120) + if (batch.lastSmsText.length > 120) "…" else "",
+                                fontSize = 11.sp,
+                                color = Color(0xFF374151),
+                                lineHeight = 16.sp,
+                            )
+                        }
+                    }
+                }
+            }
+
             // "Record Outcome" banner when a call was made but outcome not recorded
             if (hasUnrecordedOutcome) {
                 Card(

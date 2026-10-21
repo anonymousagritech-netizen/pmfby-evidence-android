@@ -25,6 +25,10 @@ data class CaseBatch(
     val latestSessionId: String?,
     val latestSessionOutcome: String?,
     val latestContactedAt: String?,
+    val contactType: String?,       // "call", "sms", "call_and_sms"
+    val smsCount: Int = 0,
+    val lastSmsStatus: String? = null,
+    val lastSmsText: String? = null,
 )
 
 data class FarmerDetailUiState(
@@ -122,6 +126,10 @@ class FarmerDetailViewModel(
                     latestSessionId = latestSession?.get("id")?.toString(),
                     latestSessionOutcome = latestSession?.get("outcome")?.toString(),
                     latestContactedAt = latestSession?.get("contacted_at")?.toString(),
+                    contactType = latestSession?.get("contact_type")?.toString(),
+                    smsCount = (latestSession?.get("sms_count") as? Number)?.toInt() ?: 0,
+                    lastSmsStatus = latestSession?.get("last_sms_status")?.toString(),
+                    lastSmsText = latestSession?.get("last_sms_text")?.toString(),
                 )
             }
         } catch (_: Exception) {
