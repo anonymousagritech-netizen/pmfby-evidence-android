@@ -47,6 +47,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.pmfby.evidence.app.ui.components.AllFilesAccessCard
+import com.pmfby.evidence.app.ui.components.recordingStatusLabel
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -84,8 +89,15 @@ fun CallScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
         if (uri != null) viewModel.uploadCallRecording(uri)
     }
 
-    val requestRecordAudio = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) viewModel.startAutoRecording()
+    val recordingStatus by viewModel.recordingStatus.collectAsState()
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.onReturnedToApp()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     // ── AUTO-DIAL: fire immediately when farmer loads — TRUE ONE-CLICK ─────────
@@ -95,7 +107,6 @@ fun CallScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
         if (phone != null && !autoCallTriggered && state.callEventId == null && !state.isDialing) {
             autoCallTriggered = true
             viewModel.startCallAttempt()
-            requestRecordAudio.launch(android.Manifest.permission.RECORD_AUDIO)
             if (app.sessionManager.preferInstantCall() && CallLauncher.hasCallPermission(context)) {
                 CallLauncher.callDirectly(context, phone)
             } else {
@@ -120,7 +131,6 @@ fun CallScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
     LaunchedEffect(state.outcomeSubmitted) {
         if (state.outcomeSubmitted) {
             showOutcomeSheet = false
-            viewModel.stopAndUploadAutoRecording()
             onDone()
         }
     }
@@ -130,7 +140,17 @@ fun CallScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
         ModalBottomSheet(onDismissRequest = { showOutcomeSheet = false }, sheetState = sheetState) {
             Column(modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 32.dp)) {
                 Text("Call ended — set the outcome", fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.padding(bottom = 4.dp))
-                Text("Recording stopped and saved.", fontSize = 13.sp, color = GreenSuccess, modifier = Modifier.padding(bottom = 16.dp))
+                Text(
+                    when (recordingStatus) {
+                        RecordingStatus.UPLOADED -> "✓ Call recording uploaded as evidence"
+                        RecordingStatus.NO_ACCESS -> "Recording not uploaded — allow All files access"
+                        RecordingStatus.NOT_FOUND, RecordingStatus.FAILED -> "Recording could not be attached yet"
+                        else -> "Call recording is being found & uploaded automatically…"
+                    },
+                    fontSize = 13.sp,
+                    color = GreenSuccess,
+                    modifier = Modifier.padding(bottom = 16.dp),
+                )
 
                 Text("Who did you reach?", fontWeight = FontWeight.Medium, fontSize = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
                 PersonContactedType.entries.forEach { type ->
@@ -173,6 +193,7 @@ fun CallScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                 .verticalScroll(rememberScrollState()),
         ) {
             ErrorBanner(state.error)
+            AllFilesAccessCard(Modifier.padding(horizontal = 14.dp, vertical = 6.dp))
 
             // ── Calling hero card ──────────────────────────────────────────────
             Card(
@@ -200,7 +221,7 @@ fun CallScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
-                                if (state.autoRecordSource != null && state.autoRecordSource != "") Icons.Filled.MicNone else Icons.Filled.Call,
+                                Icons.Filled.Call,
                                 contentDescription = null,
                                 tint = Color.White,
                                 modifier = Modifier.size(36.dp),
@@ -220,29 +241,16 @@ fun CallScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                         )
                         Spacer(Modifier.height(8.dp))
 
-                        // Recording status badge
+                        // Recording status badge (honest: driven by the background pickup job)
+                        val label = recordingStatusLabel(recordingStatus)
                         when {
-                            state.autoRecordSource != null && state.autoRecordSource != "" -> {
-                                Box(
-                                    modifier = Modifier
-                                        .background(Color(0xFF22C55E).copy(alpha = 0.25f), RoundedCornerShape(50))
-                                        .padding(horizontal = 14.dp, vertical = 5.dp),
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Filled.MicNone, contentDescription = null, tint = Color(0xFF86EFAC), modifier = Modifier.size(14.dp))
-                                        Spacer(Modifier.width(5.dp))
-                                        Text("Recording (${state.autoRecordSource})", color = Color(0xFF86EFAC), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                    }
-                                }
-                            }
+                            label != null -> Text(label.first, color = label.second, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             state.isDialing -> {
                                 CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                                 Spacer(Modifier.height(4.dp))
                                 Text("Connecting…", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
                             }
-                            else -> {
-                                Text("Return here after the call to record the outcome", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
-                            }
+                            else -> Text("Return here after the call to record the outcome", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
                         }
                     }
                 }
@@ -254,8 +262,7 @@ fun CallScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                     onClick = {
                         autoCallTriggered = true
                         viewModel.startCallAttempt()
-                        requestRecordAudio.launch(android.Manifest.permission.RECORD_AUDIO)
-                        val phone = state.farmer?.farmerMobile
+                                    val phone = state.farmer?.farmerMobile
                         if (!phone.isNullOrBlank()) {
                             if (app.sessionManager.preferInstantCall() && CallLauncher.hasCallPermission(context)) {
                                 CallLauncher.callDirectly(context, phone)
@@ -369,18 +376,7 @@ fun CallScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Filled.StopCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Attach call recording (manual fallback)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        when {
-                            state.autoRecordSource != null && state.autoRecordSource != "" ->
-                                Text("Auto-recording running — will upload on submit.", style = MaterialTheme.typography.labelMedium, color = GreenSuccess, modifier = Modifier.padding(vertical = 4.dp))
-                            state.autoRecordAttempted ->
-                                Text(
-                                    "Auto-recording blocked by OS/OEM. Use your phone's call recorder and attach below.",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.padding(vertical = 4.dp),
-                                )
+                            Text("Attach recording manually (only if auto-upload missed it)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
                             Checkbox(checked = state.recordingConsent, onCheckedChange = viewModel::onRecordingConsentChange)
@@ -398,15 +394,6 @@ fun CallScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                                     else -> "📎 Attach recording"
                                 },
                             )
-                        }
-                        if (state.autoRecordAttempted && state.autoRecordSource == "") {
-                            OutlinedButton(
-                                onClick = {
-                                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
-                                    context.startActivity(intent)
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) { Text("Open app permissions") }
                         }
                     }
                 }

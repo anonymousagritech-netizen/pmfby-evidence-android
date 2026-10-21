@@ -28,6 +28,14 @@
          SMS send flow completes to read back the record for the sent message. -->
     <uses-permission android:name="android.permission.READ_SMS" />
 
+    <!-- Auto-attach evidence: the phone's own call recorder writes to /MIUI/sound_recorder/call_rec
+         (not indexed by MediaStore) so All-files access is needed to find and upload it; screenshots
+         are in MediaStore so READ_MEDIA_IMAGES lets the SMS screenshot attach itself. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+
     <!-- Manual voice-note recording (post-call) and the emergency press-and-hold
          audio+video capture. -->
     <uses-permission android:name="android.permission.CAMERA" />

@@ -1,6 +1,16 @@
 package com.pmfby.evidence.app.ui.screens
 
+import android.content.Context
+import android.telephony.TelephonyManager
 import androidx.lifecycle.ViewModel
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import com.pmfby.evidence.app.telephony.CallStateObserver
+import com.pmfby.evidence.app.work.CallRecordingPickupWorker
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import androidx.lifecycle.viewModelScope
 import com.pmfby.evidence.app.data.local.FarmerEntity
 import com.pmfby.evidence.app.data.local.SurveyCaseEntity
@@ -26,6 +36,7 @@ data class CaseBatch(
     val latestSessionOutcome: String?,
     val latestContactedAt: String?,
     val contactType: String?,       // "call", "sms", "call_and_sms"
+    val evidenceCount: Int = 0,
     val smsCount: Int = 0,
     val lastSmsStatus: String? = null,
     val lastSmsText: String? = null,
@@ -48,6 +59,7 @@ data class FarmerDetailUiState(
 )
 
 class FarmerDetailViewModel(
+    private val appContext: Context,
     private val farmerRepository: FarmerRepository,
     private val api: ApiService,
     private val session: SessionManager,
@@ -95,6 +107,80 @@ class FarmerDetailViewModel(
 
     init { refresh() }
 
+    // Call tracking: the outcome sheet pops when the call ends, and the phone's own call
+    // recording is picked up and uploaded automatically.
+    private var callSessionId: String? = null
+    private var callPhone: String? = null
+    private var callStartMillis = 0L
+    private var callEverConnected = false
+    private var pickupTriggered = false
+    private var observer: CallStateObserver? = null
+    private val callStartFlow = MutableStateFlow(0L)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val recordingStatus: StateFlow<RecordingStatus> = callStartFlow.flatMapLatest { start ->
+        if (start == 0L) flowOf(RecordingStatus.NONE)
+        else WorkManager.getInstance(appContext).getWorkInfosForUniqueWorkFlow(CallRecordingPickupWorker.workName(start)).map { infos ->
+            val info = infos.firstOrNull() ?: return@map RecordingStatus.NONE
+            when (info.state) {
+                WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> RecordingStatus.WAITING
+                WorkInfo.State.RUNNING -> RecordingStatus.FINDING
+                WorkInfo.State.SUCCEEDED -> when (info.outputData.getString(CallRecordingPickupWorker.OUT_RESULT)) {
+                    "uploaded" -> RecordingStatus.UPLOADED
+                    "no_access" -> RecordingStatus.NO_ACCESS
+                    "not_found" -> RecordingStatus.NOT_FOUND
+                    else -> RecordingStatus.FAILED
+                }
+                else -> RecordingStatus.FAILED
+            }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), RecordingStatus.NONE)
+
+    private fun beginCallTracking(sessionId: String, phone: String) {
+        callSessionId = sessionId
+        callPhone = phone
+        callStartMillis = System.currentTimeMillis()
+        callEverConnected = false
+        pickupTriggered = false
+        callStartFlow.value = callStartMillis
+        CallRecordingPickupWorker.scheduleFallback(appContext, null, sessionId, phone, callStartMillis, null)
+        if (observer == null) {
+            var wasOffhook = false
+            observer = CallStateObserver(appContext).also { obs ->
+                obs.start(java.util.concurrent.Executors.newSingleThreadExecutor()) { state ->
+                    when (state) {
+                        CallStateObserver.ObservedState.OFFHOOK -> { wasOffhook = true; callEverConnected = true }
+                        CallStateObserver.ObservedState.IDLE -> if (wasOffhook) { wasOffhook = false; onCallEnded() }
+                        else -> {}
+                    }
+                }
+            }
+        }
+    }
+
+    private fun onCallEnded() {
+        val sid = callSessionId ?: return
+        val phone = callPhone ?: return
+        if (!pickupTriggered) {
+            pickupTriggered = true
+            CallRecordingPickupWorker.runNow(appContext, null, sid, phone, callStartMillis, callEverConnected, null)
+        }
+        outcomeSessionFlow.value = sid
+    }
+
+    /** Resume check: covers OEMs that drop the call-end signal. */
+    fun onReturnedToApp() {
+        if (callSessionId == null || pickupTriggered) return
+        val tm = appContext.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+        val idle = try { tm?.callState == TelephonyManager.CALL_STATE_IDLE } catch (_: SecurityException) { true }
+        if (idle && System.currentTimeMillis() - callStartMillis > 3_000) onCallEnded()
+    }
+
+    override fun onCleared() {
+        observer?.stop()
+        observer = null
+    }
+
     fun refresh() {
         viewModelScope.launch {
             loading.value = true
@@ -127,6 +213,7 @@ class FarmerDetailViewModel(
                     latestSessionOutcome = latestSession?.get("outcome")?.toString(),
                     latestContactedAt = latestSession?.get("contacted_at")?.toString(),
                     contactType = latestSession?.get("contact_type")?.toString(),
+                    evidenceCount = (latestSession?.get("evidence_count") as? Number)?.toInt() ?: 0,
                     smsCount = (latestSession?.get("sms_count") as? Number)?.toInt() ?: 0,
                     lastSmsStatus = latestSession?.get("last_sms_status")?.toString(),
                     lastSmsText = latestSession?.get("last_sms_text")?.toString(),
@@ -158,8 +245,8 @@ class FarmerDetailViewModel(
                 val sessionId = (response["session"] as? Map<String, Any?>)?.get("id")?.toString()
                 if (sessionId != null) {
                     pendingCallFlow.value = Pair(sessionId, phone)
-                    // After dialer fires, show outcome sheet so user records what happened
-                    outcomeSessionFlow.value = sessionId
+                    // The outcome sheet now pops by itself when the call ends (see onCallEnded).
+                    beginCallTracking(sessionId, phone)
                     loadBatches()
                 } else {
                     errorFlow.value = "Could not create call session"

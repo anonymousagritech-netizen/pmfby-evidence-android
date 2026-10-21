@@ -93,8 +93,20 @@ fun SmsTemplateScreen(
     val screenshotPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) viewModel.uploadScreenshot(uri)
     }
-    val requestSendSms = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) viewModel.sendDirectly()
+    val requestSmsPerms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.SEND_SMS) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) viewModel.sendDirectly()
+    }
+    val launchSend = {
+        val wanted = buildList {
+            add(android.Manifest.permission.SEND_SMS)
+            add(android.Manifest.permission.READ_SMS)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) add(android.Manifest.permission.READ_MEDIA_IMAGES)
+        }.filter {
+            androidx.core.content.ContextCompat.checkSelfPermission(context, it) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+        if (wanted.isEmpty()) viewModel.sendDirectly() else requestSmsPerms.launch(wanted.toTypedArray())
     }
 
     // Detect when user returns to this screen after opening the SMS app — prompt for screenshot
@@ -104,11 +116,24 @@ fun SmsTemplateScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME && promptScreenshotOnResume) {
                 promptScreenshotOnResume = false
-                screenshotPicker.launch("image/*")
+                viewModel.autoAttachLatestScreenshot()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // A screenshot taken anywhere after the send (e.g. in the Messages app) attaches itself.
+    DisposableEffect(state.sendStartedAtMillis) {
+        if (state.sendStartedAtMillis == 0L) return@DisposableEffect onDispose { }
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val observer = object : android.database.ContentObserver(handler) {
+            override fun onChange(selfChange: Boolean) {
+                handler.postDelayed({ viewModel.autoAttachLatestScreenshot() }, 1_200)
+            }
+        }
+        context.contentResolver.registerContentObserver(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, observer)
+        onDispose { context.contentResolver.unregisterContentObserver(observer) }
     }
 
     Scaffold(topBar = {
@@ -230,7 +255,7 @@ fun SmsTemplateScreen(
 
                 Column(modifier = Modifier.padding(horizontal = 14.dp)) {
                     Button(
-                        onClick = { requestSendSms.launch(android.Manifest.permission.SEND_SMS) },
+                        onClick = { launchSend() },
                         enabled = !state.isSending && !viewModel.isPostponeDataMissing(),
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(14.dp),
@@ -275,7 +300,7 @@ fun SmsTemplateScreen(
                     Row(modifier = Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = Color(0xFF4F46E5))
                         Spacer(Modifier.width(12.dp))
-                        Text("Sending SMS… waiting up to 25s for carrier reply", color = Color(0xFF1E3A5F), fontSize = 14.sp)
+                        Text("Sending SMS… waiting up to 45s for the network to accept every part", color = Color(0xFF1E3A5F), fontSize = 14.sp)
                     }
                 }
             }
@@ -285,12 +310,12 @@ fun SmsTemplateScreen(
                 state.directSendStatus != "sending"
             if (showDirectResult) {
                 val isUnknown = state.directSendStatus == "send_status_unknown"
-                val isSuccess = state.directSendStatus in setOf("sent", "delivered") || isUnknown
+                val isSuccess = state.directSendStatus in setOf("sent", "delivered")
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(14.dp),
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (isSuccess) GreenSuccessContainer else RedEmergencyContainer,
+                        containerColor = if (isSuccess) GreenSuccessContainer else if (isUnknown) AmberWarningContainer else RedEmergencyContainer,
                     ),
                     elevation = CardDefaults.cardElevation(2.dp),
                 ) {
@@ -299,7 +324,7 @@ fun SmsTemplateScreen(
                             Icon(
                                 if (isSuccess) Icons.Filled.CheckCircle else Icons.Filled.Error,
                                 contentDescription = null,
-                                tint = if (isSuccess) GreenSuccess else RedEmergency,
+                                tint = if (isSuccess) GreenSuccess else if (isUnknown) AmberWarning else RedEmergency,
                                 modifier = Modifier.size(24.dp),
                             )
                             Spacer(Modifier.width(10.dp))
@@ -309,28 +334,41 @@ fun SmsTemplateScreen(
                                     "delivered"          -> "SMS Delivered ✓"
                                     "send_failed"        -> "Send Failed"
                                     "delivery_failed"    -> "Delivery Failed"
-                                    "send_status_unknown" -> "SMS Sent ✓"
+                                    "send_status_unknown" -> "Not confirmed — may NOT have been sent"
                                     else                 -> state.directSendStatus.orEmpty()
                                 },
                                 fontWeight = FontWeight.Bold,
-                                color = if (isSuccess) GreenSuccess else RedEmergency,
+                                color = if (isSuccess) GreenSuccess else if (isUnknown) AmberWarning else RedEmergency,
                                 fontSize = 16.sp,
                             )
                         }
                         Text(
                             when (state.directSendStatus) {
-                                "sent"               -> "Carrier accepted the message."
+                                "sent"               -> if (state.osVerified) "Verified in the phone's SMS records." else "Carrier accepted the message."
                                 "delivered"          -> "Confirmed delivered by the carrier."
                                 "send_failed"        -> "The carrier/radio rejected the message."
-                                "send_status_unknown" -> "SMS sent. Carrier confirmation unavailable on this device — take a screenshot of your SMS app as additional evidence."
+                                "send_status_unknown" -> "The phone did not report this SMS as sent, so it is NOT recorded as delivered. Tap \"Send via Messages\", press Send there, then take a screenshot — it attaches automatically."
                                 else -> state.directSendResultDetail ?: ""
                             },
                             modifier = Modifier.padding(top = 6.dp),
                             fontSize = 13.sp,
-                            color = if (isSuccess) GreenSuccess else RedEmergency,
+                            color = if (isSuccess) GreenSuccess else if (isUnknown) Color(0xFF92400E) else RedEmergency,
                         )
                         Spacer(Modifier.height(10.dp))
-                        // Step 1: open SMS app; on return we auto-prompt screenshot upload
+                        if (isUnknown) {
+                            Button(
+                                onClick = {
+                                    val opened = SmsComposer.openComposer(context, state.farmer?.farmerMobile, state.renderedText)
+                                    viewModel.markComposerResult(opened)
+                                    promptScreenshotOnResume = true
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706)),
+                                shape = RoundedCornerShape(12.dp),
+                            ) { Text("Send via Messages app (message prefilled)", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                            Spacer(Modifier.height(6.dp))
+                        }
+                        // Step 1: open SMS app; on return the newest screenshot is attached automatically
                         Button(
                             onClick = {
                                 val phone = state.farmer?.farmerMobile ?: ""
@@ -343,19 +381,22 @@ fun SmsTemplateScreen(
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0369A1)),
                             shape = RoundedCornerShape(12.dp),
                         ) {
-                            Text("📱 Open SMS App → Screenshot auto-prompted on return", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text("View thread in Messages (screenshot attaches itself)", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
                         // MIUI retry for send_status_unknown
                         if (state.directSendStatus == "send_status_unknown") {
                             Spacer(Modifier.height(4.dp))
                             OutlinedButton(
-                                onClick = { requestSendSms.launch(android.Manifest.permission.SEND_SMS) },
+                                onClick = { launchSend() },
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(10.dp),
                             ) { Text("Resend SMS (if not received)", fontSize = 13.sp) }
                         }
                         Spacer(Modifier.height(6.dp))
                         // Step 2: come back and upload the screenshot
+                        state.screenshotHint?.let {
+                            Text(it, fontSize = 12.sp, color = Color(0xFF92400E), modifier = Modifier.padding(vertical = 4.dp))
+                        }
                         if (state.screenshotUploaded) {
                             Text("✓ Screenshot saved as evidence", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = GreenSuccess, modifier = Modifier.padding(vertical = 4.dp))
                         }
@@ -370,7 +411,7 @@ fun SmsTemplateScreen(
                                 Spacer(Modifier.width(6.dp))
                                 Text("Uploading…")
                             } else {
-                                Text(if (state.screenshotUploaded) "📸 Attach Another Screenshot" else "📸 Upload SMS Screenshot")
+                                Text(if (state.screenshotUploaded) "Attach another screenshot" else "Pick screenshot manually")
                             }
                         }
                         Spacer(Modifier.height(8.dp))

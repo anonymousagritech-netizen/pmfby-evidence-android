@@ -14,9 +14,18 @@ import com.pmfby.evidence.app.location.GeoTag
 import com.pmfby.evidence.app.data.remote.FileUploadApi
 import com.pmfby.evidence.app.location.LocationProvider
 import com.pmfby.evidence.app.session.SessionManager
-import com.pmfby.evidence.app.telephony.CallAudioRecorder
 import com.pmfby.evidence.app.telephony.CallStateObserver
+import android.telephony.TelephonyManager
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import com.pmfby.evidence.app.work.CallRecordingPickupWorker
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.Executor
@@ -49,6 +58,8 @@ enum class CaseResolutionOutcome(val wireValue: String) {
     DISPUTE_INCIDENT("dispute_incident"),
 }
 
+enum class RecordingStatus { NONE, WAITING, FINDING, UPLOADED, NO_ACCESS, NOT_FOUND, FAILED }
+
 data class CallUiState(
     val farmer: FarmerEntity? = null,
     val case: SurveyCaseEntity? = null,
@@ -64,10 +75,6 @@ data class CallUiState(
     val isSubmittingOutcome: Boolean = false,
     val outcomeSubmitted: Boolean = false,
     val error: String? = null,
-    /** Result of the automatic call-audio capture attempt — see CallAudioRecorder doc.
-     * null = not attempted yet, "" = attempted and failed on every audio source. */
-    val autoRecordSource: String? = null,
-    val autoRecordAttempted: Boolean = false,
     /** True when CallStateObserver detected IDLE after OFFHOOK — triggers auto-show of outcome sheet. */
     val callEndedByObserver: Boolean = false,
 )
@@ -100,6 +107,10 @@ class CallViewModel(
             _uiState.update { it.copy(error = "No farmer mobile number on file") }
             return
         }
+        callStartMillis = System.currentTimeMillis()
+        callEverConnected = false
+        recordingTriggered = false
+        callStartFlow.value = callStartMillis
         viewModelScope.launch {
             _uiState.update { it.copy(isDialing = true, error = null) }
             val geo = locationProvider.captureCurrentLocation()
@@ -120,6 +131,51 @@ class CallViewModel(
                 }
             }
             _uiState.update { it.copy(isDialing = false, geoTag = geo, callEventId = callEventId) }
+            CallRecordingPickupWorker.scheduleFallback(appContext, caseId, null, phone, callStartMillis, callEventId)
+        }
+    }
+
+    private var callStartMillis = 0L
+    private var callEverConnected = false
+    private var recordingTriggered = false
+    private val callStartFlow = MutableStateFlow(0L)
+
+    /** Live, honest status of the automatic call-recording pickup (empty until a call is placed). */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val recordingStatus: StateFlow<RecordingStatus> = callStartFlow.flatMapLatest { start ->
+        if (start == 0L) flowOf(RecordingStatus.NONE)
+        else WorkManager.getInstance(appContext).getWorkInfosForUniqueWorkFlow(CallRecordingPickupWorker.workName(start))
+            .map { infos ->
+                val info = infos.firstOrNull() ?: return@map RecordingStatus.NONE
+                when (info.state) {
+                    WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> RecordingStatus.WAITING
+                    WorkInfo.State.RUNNING -> RecordingStatus.FINDING
+                    WorkInfo.State.SUCCEEDED -> when (info.outputData.getString(CallRecordingPickupWorker.OUT_RESULT)) {
+                        "uploaded" -> RecordingStatus.UPLOADED
+                        "no_access" -> RecordingStatus.NO_ACCESS
+                        "not_found" -> RecordingStatus.NOT_FOUND
+                        else -> RecordingStatus.FAILED
+                    }
+                    else -> RecordingStatus.FAILED
+                }
+            }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), RecordingStatus.NONE)
+
+    private fun triggerRecordingPickup() {
+        if (recordingTriggered || callStartMillis == 0L) return
+        val phone = _uiState.value.farmer?.farmerMobile ?: return
+        recordingTriggered = true
+        CallRecordingPickupWorker.runNow(appContext, caseId, null, phone, callStartMillis, callEverConnected, _uiState.value.callEventId)
+    }
+
+    /** Called when the screen is resumed — covers a missed call-end signal (OEMs drop these). */
+    fun onReturnedToApp() {
+        if (callStartMillis == 0L || recordingTriggered) return
+        val tm = appContext.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+        val idle = try { tm?.callState == TelephonyManager.CALL_STATE_IDLE } catch (_: SecurityException) { true }
+        if (idle && System.currentTimeMillis() - callStartMillis > 3_000) {
+            _uiState.update { it.copy(callEndedByObserver = true) }
+            triggerRecordingPickup()
         }
     }
 
@@ -132,12 +188,12 @@ class CallViewModel(
         callStateObserver = CallStateObserver(appContext).also { obs ->
             obs.start(executor) { state ->
                 when (state) {
-                    CallStateObserver.ObservedState.OFFHOOK -> wasOffhook = true
+                    CallStateObserver.ObservedState.OFFHOOK -> { wasOffhook = true; callEverConnected = true }
                     CallStateObserver.ObservedState.IDLE -> {
                         if (wasOffhook) {
                             wasOffhook = false
                             _uiState.update { it.copy(callEndedByObserver = true) }
-                            stopAndUploadAutoRecording()
+                            triggerRecordingPickup()
                         }
                     }
                     else -> {}
@@ -149,59 +205,6 @@ class CallViewModel(
     fun stopCallStateObserver() {
         callStateObserver?.stop()
         callStateObserver = null
-    }
-
-    private var autoRecordFile: File? = null
-
-    /**
-     * Attempts automatic call-audio capture — call this right when the surveyor places the
-     * call (requires RECORD_AUDIO to already be granted; caller checks that). See
-     * CallAudioRecorder's doc for exactly what this can and cannot do on a given OS/OEM —
-     * it is a genuine attempt, not a guaranteed capability.
-     */
-    fun startAutoRecording() {
-        val file = File(appContext.cacheDir, "auto_call_${System.currentTimeMillis()}.m4a")
-        when (val result = CallAudioRecorder.start(appContext, file)) {
-            is CallAudioRecorder.StartResult.Started -> {
-                autoRecordFile = result.outputFile
-                _uiState.update { it.copy(autoRecordAttempted = true, autoRecordSource = result.source) }
-            }
-            is CallAudioRecorder.StartResult.Failed -> {
-                _uiState.update { it.copy(autoRecordAttempted = true, autoRecordSource = "") }
-            }
-        }
-    }
-
-    /** Stops the auto-recording (if one is running) and uploads it exactly like a manual
-     * voice-note recording — same backend endpoint, same consent flag (auto-capture implies
-     * the consent disclosure already shown before the call was placed). */
-    fun stopAndUploadAutoRecording() {
-        val stopped = CallAudioRecorder.stop()
-        val file = autoRecordFile
-        autoRecordFile = null
-        if (!stopped || file == null || !file.exists() || file.length() == 0L) {
-            file?.delete()
-            return
-        }
-        viewModelScope.launch {
-            val auth = session.authHeader() ?: return@launch
-            try {
-                withContext(Dispatchers.IO) {
-                    val fields = buildMap {
-                        put("caseId", caseId)
-                        put("kind", "phone_call_recording")
-                        put("consentAcknowledged", "true")
-                        _uiState.value.callEventId?.let { put("callEventId", it) }
-                    }
-                    fileUploadApi.uploadCallRecording(authHeader = auth, file = file, mimeType = "audio/mp4", fields = fields)
-                }
-                _uiState.update { it.copy(recordingUploaded = true) }
-            } catch (e: Exception) {
-                _uiState.update { it.copy(error = "Auto-recording upload failed: ${e.message}") }
-            } finally {
-                file.delete()
-            }
-        }
     }
 
     fun onRecordingConsentChange(value: Boolean) {

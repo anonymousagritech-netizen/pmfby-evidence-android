@@ -114,7 +114,7 @@ fun FarmerDetailScreen(
     onSmsBatch: (sessionId: String) -> Unit,
 ) {
     val app = LocalApp()
-    val viewModel = appViewModel { FarmerDetailViewModel(it.farmerRepository, it.apiService, app.sessionManager, farmerId) }
+    val viewModel = appViewModel { FarmerDetailViewModel(it, it.farmerRepository, it.apiService, app.sessionManager, farmerId) }
     val state by viewModel.uiState.collectAsState()
     val outcomeSessionId by viewModel.outcomeSessionId.collectAsState()
     val isSettingOutcome by viewModel.isSettingOutcome.collectAsState()
@@ -125,7 +125,10 @@ fun FarmerDetailScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) viewModel.refresh()
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refresh()
+                viewModel.onReturnedToApp()
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -172,6 +175,23 @@ fun FarmerDetailScreen(
             modifier = Modifier.fillMaxSize().padding(padding),
         ) {
             item { ErrorBanner(state.error) }
+            item { com.pmfby.evidence.app.ui.components.AllFilesAccessCard(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) }
+            item {
+                val recStatus by viewModel.recordingStatus.collectAsState()
+                com.pmfby.evidence.app.ui.components.recordingStatusLabel(recStatus)?.let { (text, _) ->
+                    Text(
+                        text,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = when (recStatus) {
+                            RecordingStatus.UPLOADED -> GreenSuccess
+                            RecordingStatus.NO_ACCESS, RecordingStatus.NOT_FOUND, RecordingStatus.FAILED -> RedEmergency
+                            else -> Color(0xFF1E3A5F)
+                        },
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                    )
+                }
+            }
 
             // ── Farmer hero card ──────────────────────────────────────────────
             item {
@@ -355,6 +375,7 @@ private fun BatchCard(
                 val smsStatusColor = when (batch.lastSmsStatus) {
                     "sent", "delivered" -> GreenSuccess
                     "send_failed", "delivery_failed" -> RedEmergency
+                    "send_status_unknown", "opened_composer", "drafted" -> AmberWarning
                     else -> Color(0xFF7C3AED)
                 }
                 val smsStatusLabel = when (batch.lastSmsStatus) {
@@ -362,8 +383,10 @@ private fun BatchCard(
                     "delivered" -> "✅ SMS Delivered"
                     "send_failed" -> "❌ Send Failed"
                     "delivery_failed" -> "❌ Delivery Failed"
-                    "send_status_unknown" -> "📱 SMS Sent (unconfirmed)"
-                    else -> "💬 SMS Sent"
+                    "send_status_unknown" -> "⚠️ SMS NOT confirmed — resend or send via Messages"
+                    "opened_composer" -> "✉️ Opened in Messages (awaiting your Send)"
+                    "drafted" -> "✉️ Draft only — not sent"
+                    else -> "💬 SMS logged"
                 }
                 Spacer(Modifier.height(8.dp))
                 Card(

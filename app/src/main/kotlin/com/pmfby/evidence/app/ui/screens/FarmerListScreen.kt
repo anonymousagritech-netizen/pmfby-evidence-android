@@ -84,6 +84,7 @@ fun FarmerListScreen(
             modifier = Modifier.fillMaxSize().padding(padding),
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
+                com.pmfby.evidence.app.ui.components.AllFilesAccessCard(Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
                 OutlinedTextField(
                     value = state.searchQuery,
                     onValueChange = viewModel::onQueryChange,

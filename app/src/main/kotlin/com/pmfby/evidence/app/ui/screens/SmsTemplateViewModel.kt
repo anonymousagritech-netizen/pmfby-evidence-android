@@ -13,6 +13,8 @@ import com.pmfby.evidence.app.data.repository.CaseActionsRepository
 import com.pmfby.evidence.app.data.repository.FarmerRepository
 import com.pmfby.evidence.app.session.SessionManager
 import com.pmfby.evidence.app.telephony.DirectSmsSender
+import com.pmfby.evidence.app.telephony.SmsEvidence
+import android.util.Log
 import com.pmfby.evidence.core.template.TemplateRenderer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -44,6 +46,11 @@ data class SmsTemplateUiState(
     val selectedTemplateCode: String? = null,
     val postponedSurveyDate: String = "",
     val postponeReason: String = "",
+    /** When the send/composer hand-off began — screenshots taken after this are attached automatically. */
+    val sendStartedAtMillis: Long = 0L,
+    /** Set when the system SMS store itself confirmed the message (OS-level proof). */
+    val osVerified: Boolean = false,
+    val screenshotHint: String? = null,
 )
 
 /**
@@ -54,6 +61,8 @@ data class SmsTemplateUiState(
  * Session mode sends sessionId to both the render endpoint and the message-events endpoint,
  * so the backend records the evidence against the whole batch (not a single case).
  */
+private const val TAG = "PMFBY-SMS"
+
 class SmsTemplateViewModel(
     private val appContext: Context,
     private val fileUploadApi: FileUploadApi,
@@ -181,7 +190,7 @@ class SmsTemplateViewModel(
         val renderedText = _uiState.value.renderedText
         val phone = _uiState.value.farmer?.farmerMobile
         viewModelScope.launch {
-            _uiState.update { it.copy(isSending = true) }
+            _uiState.update { it.copy(isSending = true, sendStartedAtMillis = System.currentTimeMillis()) }
             val status = if (opened) "opened_composer" else "drafted"
             val result = if (sessionId != null) {
                 caseActionsRepository.submitMessageEventForSession(sessionId, templateId, renderedText, phone, status)
@@ -217,12 +226,15 @@ class SmsTemplateViewModel(
             else -> rawPhone
         }
         viewModelScope.launch {
-            _uiState.update { it.copy(isSending = true, directSendStatus = "sending") }
+            val startedAt = System.currentTimeMillis()
+            _uiState.update { it.copy(isSending = true, directSendStatus = "sending", sendStartedAtMillis = startedAt, osVerified = false) }
+            Log.i(TAG, "Direct send to $phone, ${renderedText.length} chars")
             var messageEventId: String? = null
             var sawAnyResult = false
-            val timedOut = kotlinx.coroutines.withTimeoutOrNull(25_000) {
+            val timedOut = kotlinx.coroutines.withTimeoutOrNull(45_000) {
                 DirectSmsSender.send(appContext, phone, renderedText).collect { result ->
                     sawAnyResult = true
+                    Log.i(TAG, "Carrier stage=${result.stage} code=${result.resultCode}")
                     val status = when (result.stage) {
                         DirectSmsSender.Stage.SENT -> "sent"
                         DirectSmsSender.Stage.SENT_FAILED -> "send_failed"
@@ -251,15 +263,54 @@ class SmsTemplateViewModel(
                 }
             }
             if (timedOut == null && !sawAnyResult) {
-                // MIUI/RCS interception — auto-open SMS composer
+                Log.w(TAG, "No complete carrier callback within 45s — checking the system SMS store")
                 _uiState.update { it.copy(directSendStatus = "send_status_unknown") }
-                if (sessionId != null) {
+                val submitted = if (sessionId != null) {
                     caseActionsRepository.submitMessageEventForSession(sessionId, templateId, renderedText, phone, "send_status_unknown")
                 } else {
                     caseActionsRepository.submitMessageEvent(caseId!!, templateId, renderedText, phone, "send_status_unknown")
                 }
+                if (submitted is ActionResult.Submitted) {
+                    @Suppress("UNCHECKED_CAST")
+                    messageEventId = (submitted.serverResponse["messageEvent"] as? Map<String, Any?>)?.get("id")?.toString()
+                    _uiState.update { it.copy(messageEventId = messageEventId) }
+                }
+                // The OS store is the only independent proof on a phone that withholds callbacks.
+                var record = withContext(Dispatchers.IO) { SmsEvidence.findInProvider(appContext, phone, renderedText, startedAt) }
+                if (record == null) {
+                    kotlinx.coroutines.delay(3_000)
+                    record = withContext(Dispatchers.IO) { SmsEvidence.findInProvider(appContext, phone, renderedText, startedAt) }
+                }
+                Log.i(TAG, "System SMS store record: $record")
+                val verified = when (record?.box) {
+                    2 -> "sent"
+                    5 -> "send_failed"
+                    else -> null
+                }
+                if (verified != null) {
+                    _uiState.update { it.copy(directSendStatus = verified, osVerified = verified == "sent") }
+                    messageEventId?.let { caseActionsRepository.updateMessageStatus(it, verified) }
+                }
             }
             _uiState.update { it.copy(isSending = false) }
+        }
+    }
+
+    private var lastAutoShotUri: Uri? = null
+
+    /** Attaches the newest screenshot taken since the send began — no picker, no taps. */
+    fun autoAttachLatestScreenshot() {
+        val since = _uiState.value.sendStartedAtMillis
+        if (since == 0L || _uiState.value.isUploadingScreenshot) return
+        viewModelScope.launch {
+            val uri = withContext(Dispatchers.IO) { SmsEvidence.newestScreenshotSince(appContext, since) }
+            if (uri == null) {
+                _uiState.update { it.copy(screenshotHint = "Take a screenshot of the sent SMS (Power + Volume-down) — it attaches by itself.") }
+            } else if (uri != lastAutoShotUri) {
+                lastAutoShotUri = uri
+                _uiState.update { it.copy(screenshotHint = null) }
+                uploadScreenshot(uri)
+            }
         }
     }
 
