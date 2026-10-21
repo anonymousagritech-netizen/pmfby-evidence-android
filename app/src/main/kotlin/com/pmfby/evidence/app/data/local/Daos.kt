@@ -15,6 +15,9 @@ interface FarmerDao {
     @Query("SELECT * FROM cached_farmers WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): FarmerEntity?
 
+    @Query("SELECT * FROM cached_farmers WHERE farmerMobile = :mobile LIMIT 1")
+    suspend fun getByMobile(mobile: String): FarmerEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(farmers: List<FarmerEntity>)
 
@@ -43,6 +46,9 @@ interface SurveyCaseDao {
 
     @Query("SELECT * FROM cached_cases WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): SurveyCaseEntity?
+
+    @Query("SELECT * FROM cached_cases WHERE farmerId = :farmerId ORDER BY lastSyncedAtMillis DESC LIMIT 1")
+    suspend fun getFirstForFarmer(farmerId: String): SurveyCaseEntity?
 
     @Query("SELECT * FROM cached_cases WHERE id = :id LIMIT 1")
     fun observeById(id: String): Flow<SurveyCaseEntity?>

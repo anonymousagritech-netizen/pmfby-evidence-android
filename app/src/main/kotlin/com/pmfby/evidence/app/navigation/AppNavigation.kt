@@ -1,6 +1,7 @@
 package com.pmfby.evidence.app.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -23,13 +24,22 @@ import com.pmfby.evidence.app.ui.screens.VoiceMessageScreen
 
 /** The whole app's navigation graph — one composable destination per task-spec screen. */
 @Composable
-fun AppNavigation() {
+fun AppNavigation(deepLinkRoute: String? = null) {
     val navController = rememberNavController()
     val app = LocalApp()
     val startDestination = when {
         !app.sessionManager.isSignedIn() -> Routes.LOGIN
         app.sessionManager.forcePasswordChange() -> Routes.CHANGE_PASSWORD
         else -> Routes.FARMERS
+    }
+
+    // When launched from PhoneIntentActivity (tel:/smsto: chooser), navigate directly to
+    // the target screen once the graph is ready — user sees CallScreen or SmsTemplateScreen
+    // immediately with no extra taps.
+    if (deepLinkRoute != null) {
+        LaunchedEffect(deepLinkRoute) {
+            navController.navigate(deepLinkRoute)
+        }
     }
 
     NavHost(navController = navController, startDestination = startDestination) {

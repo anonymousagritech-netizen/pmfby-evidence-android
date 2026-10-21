@@ -19,6 +19,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val deepLinkRoute = intent?.getStringExtra(PhoneIntentActivity.EXTRA_START_ROUTE)
         setContent {
             PmfbyEvidenceTheme {
                 val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {}
@@ -41,7 +42,7 @@ class MainActivity : ComponentActivity() {
                     }
                     permissionLauncher.launch(permissions.toTypedArray())
                 }
-                AppNavigation()
+                AppNavigation(deepLinkRoute = deepLinkRoute)
             }
         }
     }

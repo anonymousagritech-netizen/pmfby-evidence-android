@@ -66,6 +66,32 @@
             </intent-filter>
         </activity>
 
+        <!-- Appears in the "Open with" chooser alongside Truecaller/Messages when any
+             app fires ACTION_DIAL/ACTION_CALL (tel:) or ACTION_SENDTO (smsto:/sms:).
+             The activity looks up the number in the local cache and deep-links directly
+             to CallScreen or SmsTemplateScreen — zero extra taps for the surveyor. -->
+        <activity
+            android:name=".PhoneIntentActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.DIAL" />
+                <action android:name="android.intent.action.CALL" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="tel" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SENDTO" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="smsto" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SENDTO" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="sms" />
+            </intent-filter>
+        </activity>
+
         <service
             android:name=".capture.EmergencyCaptureService"
             android:exported="false"
