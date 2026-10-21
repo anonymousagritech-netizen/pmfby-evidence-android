@@ -38,10 +38,17 @@ object CallLauncher {
     fun hasCallPermission(context: Context): Boolean =
         ContextCompat.checkSelfPermission(context, android.Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
 
-    /** Caller MUST have already confirmed [hasCallPermission] — this does not request it. */
+    /**
+     * Caller MUST have already confirmed [hasCallPermission]. Goes straight to the telephony
+     * service, so no app (including this one) can intercept the call with a chooser.
+     */
     fun callDirectly(context: Context, phoneNumber: String) {
         require(hasCallPermission(context)) { "CALL_PHONE permission not granted; use dial() instead" }
-        val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:$phoneNumber"))
-        context.startActivity(intent)
+        val telecom = context.getSystemService(android.telecom.TelecomManager::class.java)
+        try {
+            telecom.placeCall(Uri.fromParts("tel", phoneNumber, null), android.os.Bundle())
+        } catch (_: SecurityException) {
+            dial(context, phoneNumber)
+        }
     }
 }
