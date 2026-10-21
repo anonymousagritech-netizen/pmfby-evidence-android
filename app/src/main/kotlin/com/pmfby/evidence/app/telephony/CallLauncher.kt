@@ -30,6 +30,11 @@ object CallLauncher {
         context.startActivity(intent)
     }
 
+    /** Places the call immediately when CALL_PHONE is granted; otherwise falls back to the dialer. */
+    fun place(context: Context, phoneNumber: String) {
+        if (hasCallPermission(context)) callDirectly(context, phoneNumber) else dial(context, phoneNumber)
+    }
+
     fun hasCallPermission(context: Context): Boolean =
         ContextCompat.checkSelfPermission(context, android.Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
 

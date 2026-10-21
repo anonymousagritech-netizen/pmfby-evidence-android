@@ -137,8 +137,7 @@ fun FarmerDetailScreen(
     // Open phone dialer when a call session is ready
     LaunchedEffect(state.pendingCallSession) {
         val pending = state.pendingCallSession ?: return@LaunchedEffect
-        val dialUri = Uri.parse("tel:${pending.second}")
-        context.startActivity(Intent(Intent.ACTION_DIAL, dialUri))
+        com.pmfby.evidence.app.telephony.CallLauncher.place(context, pending.second)
         viewModel.clearPendingCall()
     }
 

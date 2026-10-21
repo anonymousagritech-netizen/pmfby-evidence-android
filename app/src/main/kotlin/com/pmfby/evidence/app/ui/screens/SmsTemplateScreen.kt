@@ -300,7 +300,7 @@ fun SmsTemplateScreen(
                     Row(modifier = Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = Color(0xFF4F46E5))
                         Spacer(Modifier.width(12.dp))
-                        Text("Sending SMS… waiting up to 45s for the network to accept every part", color = Color(0xFF1E3A5F), fontSize = 14.sp)
+                        Text("Sending SMS…", color = Color(0xFF1E3A5F), fontSize = 14.sp)
                     }
                 }
             }
@@ -334,7 +334,7 @@ fun SmsTemplateScreen(
                                     "delivered"          -> "SMS Delivered ✓"
                                     "send_failed"        -> "Send Failed"
                                     "delivery_failed"    -> "Delivery Failed"
-                                    "send_status_unknown" -> "Not confirmed — may NOT have been sent"
+                                    "send_status_unknown" -> "Handed to the phone — awaiting network"
                                     else                 -> state.directSendStatus.orEmpty()
                                 },
                                 fontWeight = FontWeight.Bold,
@@ -347,7 +347,7 @@ fun SmsTemplateScreen(
                                 "sent"               -> if (state.osVerified) "Verified in the phone's SMS records." else "Carrier accepted the message."
                                 "delivered"          -> "Confirmed delivered by the carrier."
                                 "send_failed"        -> "The carrier/radio rejected the message."
-                                "send_status_unknown" -> "The phone did not report this SMS as sent, so it is NOT recorded as delivered. Tap \"Send via Messages\", press Send there, then take a screenshot — it attaches automatically."
+                                "send_status_unknown" -> "The SMS is queued on this phone and is being sent. This tick turns green by itself when the network accepts it (it is logged in history right now). If it stays amber for a few minutes, use \"Send via Messages\"."
                                 else -> state.directSendResultDetail ?: ""
                             },
                             modifier = Modifier.padding(top = 6.dp),

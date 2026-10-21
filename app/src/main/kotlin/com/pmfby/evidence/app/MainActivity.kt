@@ -36,6 +36,7 @@ class MainActivity : ComponentActivity() {
                         add(Manifest.permission.CAMERA)
                         add(Manifest.permission.RECORD_AUDIO)
                         add(Manifest.permission.READ_PHONE_STATE)
+                        add(Manifest.permission.CALL_PHONE)
                         add(Manifest.permission.SEND_SMS)
                         add(Manifest.permission.READ_SMS)
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

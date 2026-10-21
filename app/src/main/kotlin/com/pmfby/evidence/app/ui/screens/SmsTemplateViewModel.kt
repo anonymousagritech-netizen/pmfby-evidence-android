@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
 data class SmsTemplateOption(val id: String, val code: String, val label: String)
@@ -229,70 +230,49 @@ class SmsTemplateViewModel(
             val startedAt = System.currentTimeMillis()
             _uiState.update { it.copy(isSending = true, directSendStatus = "sending", sendStartedAtMillis = startedAt, osVerified = false) }
             Log.i(TAG, "Direct send to $phone, ${renderedText.length} chars")
-            var messageEventId: String? = null
-            var sawAnyResult = false
-            val timedOut = kotlinx.coroutines.withTimeoutOrNull(45_000) {
-                DirectSmsSender.send(appContext, phone, renderedText).collect { result ->
-                    sawAnyResult = true
-                    Log.i(TAG, "Carrier stage=${result.stage} code=${result.resultCode}")
-                    val status = when (result.stage) {
-                        DirectSmsSender.Stage.SENT -> "sent"
-                        DirectSmsSender.Stage.SENT_FAILED -> "send_failed"
-                        DirectSmsSender.Stage.DELIVERED -> "delivered"
-                        DirectSmsSender.Stage.DELIVERY_FAILED -> "delivery_failed"
-                        DirectSmsSender.Stage.DELIVERY_UNKNOWN -> "sent"
-                    }
-                    val detail = if (result.stage == DirectSmsSender.Stage.SENT_FAILED || result.stage == DirectSmsSender.Stage.DELIVERY_FAILED) {
-                        DirectSmsSender.resultCodeName(result.resultCode)
-                    } else null
-                    _uiState.update { it.copy(directSendStatus = status, directSendResultDetail = detail) }
-                    if (messageEventId == null) {
-                        val submitResult = if (sessionId != null) {
-                            caseActionsRepository.submitMessageEventForSession(sessionId, templateId, renderedText, phone, status)
-                        } else {
-                            caseActionsRepository.submitMessageEvent(caseId!!, templateId, renderedText, phone, status)
-                        }
-                        if (submitResult is ActionResult.Submitted) {
-                            @Suppress("UNCHECKED_CAST")
-                            messageEventId = (submitResult.serverResponse["messageEvent"] as? Map<String, Any?>)?.get("id")?.toString()
-                            _uiState.update { it.copy(messageEventId = messageEventId) }
-                        }
-                    } else {
-                        caseActionsRepository.updateMessageStatus(messageEventId!!, status)
-                    }
-                }
-            }
-            if (timedOut == null && !sawAnyResult) {
-                Log.w(TAG, "No complete carrier callback within 45s — checking the system SMS store")
-                _uiState.update { it.copy(directSendStatus = "send_status_unknown") }
-                val submitted = if (sessionId != null) {
+
+            // The server log runs in parallel so a slow/cold backend never delays the SMS itself.
+            val eventId = async {
+                val r = if (sessionId != null) {
                     caseActionsRepository.submitMessageEventForSession(sessionId, templateId, renderedText, phone, "send_status_unknown")
                 } else {
                     caseActionsRepository.submitMessageEvent(caseId!!, templateId, renderedText, phone, "send_status_unknown")
                 }
-                if (submitted is ActionResult.Submitted) {
+                if (r is ActionResult.Submitted) {
                     @Suppress("UNCHECKED_CAST")
-                    messageEventId = (submitted.serverResponse["messageEvent"] as? Map<String, Any?>)?.get("id")?.toString()
-                    _uiState.update { it.copy(messageEventId = messageEventId) }
+                    val id = (r.serverResponse["messageEvent"] as? Map<String, Any?>)?.get("id")?.toString()
+                    _uiState.update { it.copy(messageEventId = id) }
+                    id
+                } else null
+            }
+
+            // Keeps listening for the carrier's answer well after the screen has moved on.
+            val sendJob = launch {
+                kotlinx.coroutines.withTimeoutOrNull(5 * 60_000L) {
+                    DirectSmsSender.send(appContext, phone, renderedText).collect { result ->
+                        Log.i(TAG, "Carrier stage=${result.stage} code=${result.resultCode}")
+                        val status = if (result.stage == DirectSmsSender.Stage.SENT) "sent" else "send_failed"
+                        val detail = if (status == "send_failed") DirectSmsSender.resultCodeName(result.resultCode) else null
+                        _uiState.update { it.copy(directSendStatus = status, directSendResultDetail = detail, isSending = false) }
+                        eventId.await()?.let { caseActionsRepository.updateMessageStatus(it, status) }
+                    }
                 }
-                // The OS store is the only independent proof on a phone that withholds callbacks.
-                var record = withContext(Dispatchers.IO) { SmsEvidence.findInProvider(appContext, phone, renderedText, startedAt) }
-                if (record == null) {
-                    kotlinx.coroutines.delay(3_000)
-                    record = withContext(Dispatchers.IO) { SmsEvidence.findInProvider(appContext, phone, renderedText, startedAt) }
-                }
-                Log.i(TAG, "System SMS store record: $record")
-                val verified = when (record?.box) {
-                    2 -> "sent"
-                    5 -> "send_failed"
-                    else -> null
-                }
-                if (verified != null) {
-                    _uiState.update { it.copy(directSendStatus = verified, osVerified = verified == "sent") }
-                    messageEventId?.let { caseActionsRepository.updateMessageStatus(it, verified) }
+                if (_uiState.value.directSendStatus == "send_status_unknown" || _uiState.value.directSendStatus == "sending") {
+                    val record = withContext(Dispatchers.IO) { SmsEvidence.findInProvider(appContext, phone, renderedText, startedAt) }
+                    Log.i(TAG, "System SMS store record: $record")
+                    val verified = when (record?.box) { 2 -> "sent"; 5 -> "send_failed"; else -> null }
+                    if (verified != null) {
+                        _uiState.update { it.copy(directSendStatus = verified, osVerified = verified == "sent") }
+                        eventId.await()?.let { caseActionsRepository.updateMessageStatus(it, verified) }
+                    }
                 }
             }
-            _uiState.update { it.copy(isSending = false) }
+
+            // The screen answers fast; the job above keeps confirming in the background.
+            kotlinx.coroutines.withTimeoutOrNull(6_000) { sendJob.join() }
+            _uiState.update {
+                it.copy(isSending = false, directSendStatus = if (it.directSendStatus == "sending") "send_status_unknown" else it.directSendStatus)
+            }
         }
     }
 

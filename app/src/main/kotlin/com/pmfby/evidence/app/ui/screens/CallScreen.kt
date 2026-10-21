@@ -107,11 +107,7 @@ fun CallScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
         if (phone != null && !autoCallTriggered && state.callEventId == null && !state.isDialing) {
             autoCallTriggered = true
             viewModel.startCallAttempt()
-            if (app.sessionManager.preferInstantCall() && CallLauncher.hasCallPermission(context)) {
-                CallLauncher.callDirectly(context, phone)
-            } else {
-                CallLauncher.dial(context, phone)
-            }
+            CallLauncher.place(context, phone)
         }
     }
 
@@ -264,11 +260,7 @@ fun CallScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
                         viewModel.startCallAttempt()
                                     val phone = state.farmer?.farmerMobile
                         if (!phone.isNullOrBlank()) {
-                            if (app.sessionManager.preferInstantCall() && CallLauncher.hasCallPermission(context)) {
-                                CallLauncher.callDirectly(context, phone)
-                            } else {
-                                CallLauncher.dial(context, phone)
-                            }
+                            CallLauncher.place(context, phone)
                         }
                     },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
