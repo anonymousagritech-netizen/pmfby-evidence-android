@@ -3,7 +3,10 @@ package com.pmfby.evidence.app.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -136,7 +139,18 @@ private fun FarmerRow(item: FarmerListItem, onClick: () -> Unit) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            StatusBadge(item.dominantTab)
+            Row(modifier = androidx.compose.ui.Modifier.padding(top = 6.dp)) {
+                StatusBadge(item.dominantTab)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "${item.caseCount} docket${if (item.caseCount != 1) "s" else ""}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = androidx.compose.ui.Modifier
+                        .background(MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small)
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                )
+            }
         }
     }
 }
@@ -154,7 +168,6 @@ private fun StatusBadge(tab: CaseStatusTab) {
         style = MaterialTheme.typography.labelMedium,
         color = content,
         modifier = Modifier
-            .padding(top = 6.dp)
             .background(container, shape = MaterialTheme.shapes.small)
             .padding(horizontal = 8.dp, vertical = 2.dp),
     )

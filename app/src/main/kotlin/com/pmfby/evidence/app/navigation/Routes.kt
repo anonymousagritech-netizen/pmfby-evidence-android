@@ -21,6 +21,11 @@ object Routes {
     const val SMS_PATTERN = "sms/{caseId}"
     fun sms(caseId: String) = "sms/$caseId"
 
+    /** SMS with a pre-selected template code — skips the template picker step. */
+    const val SMS_CODE_PATTERN = "sms/{caseId}/{templateCode}"
+    fun smsWithCode(caseId: String, code: String) = "sms/$caseId/$code"
+    const val ARG_TEMPLATE_CODE = "templateCode"
+
     /** Session-based SMS: one send covers all dockets in the farmer-batch. */
     const val SMS_SESSION_PATTERN = "sms-session/{sessionId}"
     fun smsSession(sessionId: String) = "sms-session/$sessionId"

@@ -64,6 +64,8 @@ class SmsTemplateViewModel(
     /** Exactly one of these must be non-null. sessionId = batch contact, caseId = single case. */
     private val caseId: String?,
     private val sessionId: String?,
+    /** If set, the matching template is auto-selected after loading (skips the template picker). */
+    private val preselectedTemplateCode: String? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SmsTemplateUiState())
@@ -112,6 +114,10 @@ class SmsTemplateViewModel(
                 SmsTemplateOption(id, code, code.replace('_', ' '))
             }
             _uiState.update { it.copy(templates = options, isLoading = false) }
+            // Auto-select if a template code was pre-specified (e.g. from CaseDetailScreen SMS sheet)
+            if (preselectedTemplateCode != null) {
+                options.firstOrNull { it.code == preselectedTemplateCode }?.let { selectTemplate(it.id) }
+            }
         } catch (e: Exception) {
             _uiState.update { it.copy(isLoading = false, error = e.message ?: "Could not load templates") }
         }

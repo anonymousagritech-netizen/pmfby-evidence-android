@@ -20,12 +20,17 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.RadioButton
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.MicNone
 import androidx.compose.material.icons.filled.StopCircle
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -66,6 +71,7 @@ import com.pmfby.evidence.app.ui.theme.GradientIndigoEnd
 import com.pmfby.evidence.app.ui.theme.GradientIndigoStart
 import com.pmfby.evidence.app.ui.theme.GreenSuccess
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CallScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
     val context = LocalContext.current
@@ -97,10 +103,64 @@ fun CallScreen(caseId: String, onBack: () -> Unit, onDone: () -> Unit) {
         }
     }
 
+    // ── CallStateObserver: auto-detect call end → pop outcome sheet ───────────
+    val observerExecutor = remember { java.util.concurrent.Executors.newSingleThreadExecutor() }
+    DisposableEffect(Unit) {
+        viewModel.startCallStateObserver(observerExecutor)
+        onDispose { viewModel.stopCallStateObserver() }
+    }
+
+    var showOutcomeSheet by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    LaunchedEffect(state.callEndedByObserver) {
+        if (state.callEndedByObserver) showOutcomeSheet = true
+    }
+
     LaunchedEffect(state.outcomeSubmitted) {
         if (state.outcomeSubmitted) {
+            showOutcomeSheet = false
             viewModel.stopAndUploadAutoRecording()
             onDone()
+        }
+    }
+
+    // Auto outcome bottom sheet — pops immediately when call ends (observer detected IDLE)
+    if (showOutcomeSheet) {
+        ModalBottomSheet(onDismissRequest = { showOutcomeSheet = false }, sheetState = sheetState) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 32.dp)) {
+                Text("Call ended — set the outcome", fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.padding(bottom = 4.dp))
+                Text("Recording stopped and saved.", fontSize = 13.sp, color = GreenSuccess, modifier = Modifier.padding(bottom = 16.dp))
+
+                Text("Who did you reach?", fontWeight = FontWeight.Medium, fontSize = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
+                PersonContactedType.entries.forEach { type ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().selectable(selected = state.personContactedType == type) { viewModel.onPersonContactedTypeChange(type) },
+                    ) {
+                        RadioButton(selected = state.personContactedType == type, onClick = { viewModel.onPersonContactedTypeChange(type) })
+                        Text(type.name.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() })
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Text("How did it go?", fontWeight = FontWeight.Medium, fontSize = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
+                RawCallOutcome.entries.forEach { outcome ->
+                    OutlinedButton(
+                        onClick = { viewModel.submitCallOutcome(outcome) },
+                        enabled = !state.isSubmittingOutcome,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        shape = RoundedCornerShape(10.dp),
+                    ) { Text(outcome.name.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }) }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(12.dp))
+                Text("Resolve this attempt", fontWeight = FontWeight.Medium, fontSize = 14.sp, modifier = Modifier.padding(bottom = 4.dp))
+                OutcomeResolutionSection(enabled = !state.isSubmittingOutcome) { outcome, reason, agreed, until ->
+                    viewModel.resolveCaseOutcome(outcome, reason, agreed, until)
+                }
+            }
         }
     }
 

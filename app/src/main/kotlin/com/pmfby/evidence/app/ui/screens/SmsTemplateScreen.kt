@@ -32,10 +32,17 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -70,10 +77,16 @@ private fun templateColors(code: String): Pair<Color, Color> = when {
 }
 
 @Composable
-fun SmsTemplateScreen(caseId: String?, sessionId: String?, onBack: () -> Unit, onDone: () -> Unit) {
+fun SmsTemplateScreen(
+    caseId: String?,
+    sessionId: String?,
+    preselectedTemplateCode: String? = null,
+    onBack: () -> Unit,
+    onDone: () -> Unit,
+) {
     val context = LocalContext.current
     val viewModel = appViewModel { app ->
-        SmsTemplateViewModel(app, app.fileUploadApi, app.apiService, app.sessionManager, app.farmerRepository, app.caseActionsRepository, caseId, sessionId)
+        SmsTemplateViewModel(app, app.fileUploadApi, app.apiService, app.sessionManager, app.farmerRepository, app.caseActionsRepository, caseId, sessionId, preselectedTemplateCode)
     }
     val state by viewModel.uiState.collectAsState()
 
@@ -84,9 +97,19 @@ fun SmsTemplateScreen(caseId: String?, sessionId: String?, onBack: () -> Unit, o
         if (granted) viewModel.sendDirectly()
     }
 
-    // Note: on MIUI/VoWiFi devices SmsManager callbacks never fire, so send_status_unknown
-    // means the SMS was likely sent at radio level but we got no carrier confirmation.
-    // We DO NOT auto-open the composer here — that caused double-sends via RCS which fail.
+    // Detect when user returns to this screen after opening the SMS app — prompt for screenshot
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var promptScreenshotOnResume by remember { mutableStateOf(false) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && promptScreenshotOnResume) {
+                promptScreenshotOnResume = false
+                screenshotPicker.launch("image/*")
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     Scaffold(topBar = {
         PmfbyTopBar(title = "Send SMS", onBack = onBack)
@@ -307,19 +330,29 @@ fun SmsTemplateScreen(caseId: String?, sessionId: String?, onBack: () -> Unit, o
                             color = if (isSuccess) GreenSuccess else RedEmergency,
                         )
                         Spacer(Modifier.height(10.dp))
-                        // Step 1: open the SMS app so user can take a screenshot
+                        // Step 1: open SMS app; on return we auto-prompt screenshot upload
                         Button(
                             onClick = {
                                 val phone = state.farmer?.farmerMobile ?: ""
                                 val digits = phone.filter { it.isDigit() }
                                 val smsUri = android.net.Uri.parse("smsto:$digits")
                                 context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, smsUri))
+                                promptScreenshotOnResume = true
                             },
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0369A1)),
                             shape = RoundedCornerShape(12.dp),
                         ) {
-                            Text("📱 Open SMS App → Take Screenshot", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text("📱 Open SMS App → Screenshot auto-prompted on return", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                        // MIUI retry for send_status_unknown
+                        if (state.directSendStatus == "send_status_unknown") {
+                            Spacer(Modifier.height(4.dp))
+                            OutlinedButton(
+                                onClick = { requestSendSms.launch(android.Manifest.permission.SEND_SMS) },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp),
+                            ) { Text("Resend SMS (if not received)", fontSize = 13.sp) }
                         }
                         Spacer(Modifier.height(6.dp))
                         // Step 2: come back and upload the screenshot

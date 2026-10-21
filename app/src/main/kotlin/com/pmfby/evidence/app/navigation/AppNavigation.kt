@@ -70,6 +70,7 @@ fun AppNavigation() {
                 onBack = { navController.popBackStack() },
                 onCall = { navController.navigate(Routes.call(it)) },
                 onSms = { navController.navigate(Routes.sms(it)) },
+                onSmsWithCode = { id, code -> navController.navigate(Routes.smsWithCode(id, code)) },
                 onEvidenceHistory = { navController.navigate(Routes.evidenceHistory(it)) },
                 onEmergency = { navController.navigate(Routes.emergency(it)) },
             )
@@ -87,6 +88,17 @@ fun AppNavigation() {
             SmsTemplateScreen(
                 caseId = backStackEntry.requireArg(Routes.ARG_CASE_ID),
                 sessionId = null,
+                preselectedTemplateCode = null,
+                onBack = { navController.popBackStack() },
+                onDone = { navController.popBackStack() },
+            )
+        }
+
+        composable(Routes.SMS_CODE_PATTERN) { backStackEntry ->
+            SmsTemplateScreen(
+                caseId = backStackEntry.requireArg(Routes.ARG_CASE_ID),
+                sessionId = null,
+                preselectedTemplateCode = backStackEntry.requireArg(Routes.ARG_TEMPLATE_CODE),
                 onBack = { navController.popBackStack() },
                 onDone = { navController.popBackStack() },
             )

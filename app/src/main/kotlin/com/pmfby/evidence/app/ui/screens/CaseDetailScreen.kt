@@ -26,6 +26,9 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -77,12 +80,14 @@ import com.pmfby.evidence.core.status.CaseStatusInput
 import com.pmfby.evidence.core.status.CaseStatusMapper
 import com.pmfby.evidence.core.status.CaseStatusTab
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CaseDetailScreen(
     caseId: String,
     onBack: () -> Unit,
     onCall: (String) -> Unit,
     onSms: (String) -> Unit,
+    onSmsWithCode: (String, String) -> Unit = { id, code -> onSms(id) },
     onEvidenceHistory: (String) -> Unit,
     onEmergency: (String) -> Unit,
 ) {
@@ -90,6 +95,8 @@ fun CaseDetailScreen(
     val state by viewModel.uiState.collectAsState()
     val farmer by viewModel.farmer.collectAsState()
     var showCompleteDialog by remember { mutableStateOf(false) }
+    var showSmsSheet by remember { mutableStateOf(false) }
+    val smsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val tab = state.case?.let {
         CaseStatusMapper.tabFor(CaseStatusInput(it.contactStatus, it.attemptCount, it.forcefulSurveyFlag, it.lastCallOutcome, it.lastMessageStatus))
@@ -214,7 +221,7 @@ fun CaseDetailScreen(
                     Text("Call", fontWeight = FontWeight.Bold)
                 }
                 Button(
-                    onClick = { onSms(caseId) },
+                    onClick = { showSmsSheet = true },
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(containerColor = VioletSms),
                     shape = RoundedCornerShape(14.dp),
@@ -318,6 +325,33 @@ fun CaseDetailScreen(
                     shape = RoundedCornerShape(14.dp),
                 ) {
                     Text("🎉 This case is closed — survey completed.", modifier = Modifier.padding(16.dp), color = GreenSuccess, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+    }
+
+    // ── SMS template picker bottom sheet ────────────────────────────────────────
+    if (showSmsSheet) {
+        ModalBottomSheet(onDismissRequest = { showSmsSheet = false }, sheetState = smsSheetState) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 32.dp)) {
+                Text("Choose SMS Type", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text(
+                    "Tap a template — it will be pre-filled and ready to send.",
+                    fontSize = 13.sp,
+                    color = Color(0xFF6B7280),
+                    modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
+                )
+                listOf(
+                    Triple("FORMAT_1_DENIED", "❌  Farmer Denied Survey", Color(0xFFDC2626)),
+                    Triple("FORMAT_2_POSTPONED", "📅  Survey Postponed", Color(0xFFEA580C)),
+                    Triple("FORMAT_3_WRONG_NUMBER", "📵  Wrong Number", Color(0xFF9333EA)),
+                ).forEach { (code, label, color) ->
+                    Button(
+                        onClick = { showSmsSheet = false; onSmsWithCode(caseId, code) },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = color),
+                        shape = RoundedCornerShape(14.dp),
+                    ) { Text(label, fontWeight = FontWeight.Bold, fontSize = 14.sp) }
                 }
             }
         }

@@ -15,9 +15,11 @@ import com.pmfby.evidence.app.data.remote.FileUploadApi
 import com.pmfby.evidence.app.location.LocationProvider
 import com.pmfby.evidence.app.session.SessionManager
 import com.pmfby.evidence.app.telephony.CallAudioRecorder
+import com.pmfby.evidence.app.telephony.CallStateObserver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.Executor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -66,6 +68,8 @@ data class CallUiState(
      * null = not attempted yet, "" = attempted and failed on every audio source. */
     val autoRecordSource: String? = null,
     val autoRecordAttempted: Boolean = false,
+    /** True when CallStateObserver detected IDLE after OFFHOOK — triggers auto-show of outcome sheet. */
+    val callEndedByObserver: Boolean = false,
 )
 
 class CallViewModel(
@@ -117,6 +121,34 @@ class CallViewModel(
             }
             _uiState.update { it.copy(isDialing = false, geoTag = geo, callEventId = callEventId) }
         }
+    }
+
+    // ── CallStateObserver — auto-detect call end ──────────────────────────────
+    private var callStateObserver: CallStateObserver? = null
+    private var wasOffhook = false
+
+    fun startCallStateObserver(executor: Executor) {
+        if (callStateObserver != null) return
+        callStateObserver = CallStateObserver(appContext).also { obs ->
+            obs.start(executor) { state ->
+                when (state) {
+                    CallStateObserver.ObservedState.OFFHOOK -> wasOffhook = true
+                    CallStateObserver.ObservedState.IDLE -> {
+                        if (wasOffhook) {
+                            wasOffhook = false
+                            _uiState.update { it.copy(callEndedByObserver = true) }
+                            stopAndUploadAutoRecording()
+                        }
+                    }
+                    else -> {}
+                }
+            }
+        }
+    }
+
+    fun stopCallStateObserver() {
+        callStateObserver?.stop()
+        callStateObserver = null
     }
 
     private var autoRecordFile: File? = null
